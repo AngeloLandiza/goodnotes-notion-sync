@@ -132,26 +132,38 @@ def cmd_sync(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        prog="goodnotes-notion-sync",
-        description=(
-            "Link each Notion assignment to the GoodNotes PDF of the same name "
-            "in your Google Drive backup folder."
-        ),
-    )
-    parser.add_argument(
+    # Shared flags live on a parent parser attached to each subcommand, so they
+    # work in either position without the subparser's default clobbering a
+    # value given before the subcommand.
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument(
         "--env-file",
         default=".env",
         help="dotenv file to read before running (default: .env)",
     )
-    parser.add_argument("-v", "--verbose", action="store_true")
+    common.add_argument("-v", "--verbose", action="store_true")
+
+    parser = argparse.ArgumentParser(
+        prog="goodnotes-notion-sync",
+        description=(
+            "Link each Notion assignment to the GoodNotes PDF of the same name "
+            "in your Google Drive backup folder. Runs 'sync' when no "
+            "subcommand is given."
+        ),
+    )
 
     sub = parser.add_subparsers(dest="command")
 
-    auth = sub.add_parser("auth", help="mint a Google refresh token (run once)")
+    auth = sub.add_parser(
+        "auth",
+        parents=[common],
+        help="mint a Google refresh token (run once)",
+    )
     auth.set_defaults(func=cmd_auth)
 
-    sync = sub.add_parser("sync", help="match PDFs to assignments (default)")
+    sync = sub.add_parser(
+        "sync", parents=[common], help="match PDFs to assignments (default)"
+    )
     sync.add_argument("--database", help="Notion assignments database id")
     sync.add_argument("--folder", help="Drive folder id, URL, or exact name")
     sync.add_argument("--url-property", default="Notes PDF")
@@ -179,12 +191,18 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+SUBCOMMANDS = ("auth", "sync")
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
-    if not argv or argv[0].startswith("-"):
-        # Bare invocation means "sync".
-        if not any(a in ("auth", "sync") for a in argv):
-            argv = ["sync", *argv]
+
+    # A bare invocation, or one with only flags, means "sync" -- but never
+    # swallow a top-level help request into the subparser.
+    wants_help = bool({"-h", "--help"} & set(argv))
+    has_subcommand = any(arg in SUBCOMMANDS for arg in argv)
+    if not has_subcommand and not wants_help:
+        argv = ["sync", *argv]
 
     parser = build_parser()
     args = parser.parse_args(argv)
