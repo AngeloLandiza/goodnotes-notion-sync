@@ -145,6 +145,13 @@ class DriveClient:
                     else:
                         log.warning("Stopping at depth %s inside %r", max_depth, name)
                     continue
+                # PDFs only, deliberately. When the backup format is set to
+                # "both", every notebook also lands as a `.goodnotes` archive
+                # with the same stem. Indexing those would give each notebook
+                # two candidates scoring identically, and the ambiguity guard
+                # in best_match() would then refuse to link anything at all.
+                # The PDF is also the only one of the pair Drive and Notion can
+                # preview, so it is the copy worth linking to.
                 if mime != PDF_MIME and not name.lower().endswith(".pdf"):
                     continue
                 found.append(

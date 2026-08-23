@@ -55,8 +55,15 @@ tells you exactly which notebook to rename.
 
 ### 1. Turn on the GoodNotes backup
 
-In GoodNotes: **Settings → Auto-Backup → Google Drive**, format **PDF**, and
-pick (or create) a destination folder. Note the folder's name or URL.
+In GoodNotes: **Settings → Auto-Backup → Google Drive**, and pick (or create)
+a destination folder. Note the folder's name, id, or URL.
+
+Format can be **PDF** or **both**. If you pick both, every notebook lands twice
+-- `Notebook.pdf` and `Notebook.goodnotes` -- and this tool indexes only the
+PDF. That is on purpose: the two files share a stem and would score
+identically, which would trip the ambiguity guard and stop *anything* from
+linking. The PDF is also the only one of the pair that previews in Drive and
+Notion.
 
 ### 2. Add the Notion property
 
