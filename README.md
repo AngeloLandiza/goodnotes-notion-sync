@@ -89,12 +89,20 @@ Read-only Drive scope is all this asks for.
 ```bash
 git clone https://github.com/<you>/goodnotes-notion-sync
 cd goodnotes-notion-sync
-pip install -r requirements.txt
-cp .env.example .env      # fill in the values you just collected
 
+python3 -m venv .venv          # see the note below if you skip this
+source .venv/bin/activate
+pip install -r requirements.txt
+
+cp .env.example .env           # fill in the values you just collected
 python -m goodnotes_notion_sync auth   # prints a refresh token
 # paste it into .env as GOOGLE_REFRESH_TOKEN
 ```
+
+> **Use the virtualenv.** On macOS with Homebrew Python (and most current Linux
+> distros) a bare `pip install` fails with `error: externally-managed-environment`
+> — PEP 668 stops you installing into the system interpreter. A venv is the fix;
+> `--break-system-packages` is not.
 
 ### 5. Run it
 
@@ -131,16 +139,47 @@ these repository secrets (**Settings → Secrets and variables → Actions**):
 Each run writes its report to the job summary, so the unmatched list is one
 click from the Actions tab.
 
+## Optional: Vercel dashboard
+
+`vercel.json`, `api/` and `public/` add a small web UI — a report of what is
+linked, what is not, and which PDFs have no assignment, plus a **Sync now**
+button. GitHub Actions still does the scheduling; Vercel Hobby caps cron at
+**once per day** (a more frequent expression fails at deploy time), so it is a
+poor replacement for the 6-hourly Action but a good companion to it.
+
+```bash
+vercel                    # deploy
+```
+
+Set `APP_TOKEN` to a long random string in the project's environment
+variables, alongside the same six the CLI uses. Vercel injects `CRON_SECRET`
+itself.
+
+> **That endpoint is public.** Anyone who guesses the deployment name can reach
+> it, so every request must carry `Authorization: Bearer <APP_TOKEN>` (the
+> dashboard) or `<CRON_SECRET>` (Vercel's scheduler). With neither variable set
+> the handler rejects everything rather than running open — see
+> `tests/test_api_auth.py`.
+
 ## Development
 
 ```bash
+source .venv/bin/activate     # created during setup, above
 pip install -r requirements-dev.txt
-pytest
+pytest                        # 47 tests, offline, well under a second
 ```
 
-The matching rules are the part worth testing — `tests/test_matching.py`
-covers normalisation, the course veto, number conflicts and ambiguity;
-`tests/test_sync.py` covers the sync loop against stub clients.
+Three suites, and the split is deliberate:
+
+- `tests/test_matching.py` — normalisation, the course veto, number conflicts,
+  ambiguity refusal. The rules that decide whether a link is right.
+- `tests/test_sync.py` — the sync loop against stub Drive/Notion clients, so
+  claim-ordering and dry-run behaviour are covered without a network.
+- `tests/test_api_auth.py` — the Vercel endpoint's bearer check, including that
+  it **fails closed** when no token is configured.
+
+Nothing here touches the network, which is why it runs instantly and why it is
+worth running on every change.
 
 ## Limits
 

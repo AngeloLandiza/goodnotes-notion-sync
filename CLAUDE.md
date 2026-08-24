@@ -7,12 +7,17 @@ property. GoodNotes has no API; the hook is its Auto-Backup to Drive.
 ## Commands
 
 ```bash
+python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements-dev.txt
-pytest                                     # 36 tests, all offline, ~0.15s
+pytest                                     # 47 tests, offline, ~0.2s
 python -m goodnotes_notion_sync --dry-run  # report without writing
 python -m goodnotes_notion_sync            # write links
 python -m goodnotes_notion_sync auth       # mint a Google refresh token
 ```
+
+Always work inside the venv. This machine is macOS with Homebrew Python, so a
+bare `pip install` fails with PEP 668 `externally-managed-environment`.
+`--break-system-packages` would "work" and is the wrong answer.
 
 No linter or formatter is configured. Tests are stdlib + pytest and never touch
 the network. Keep it that way — it is why they run instantly and why the
@@ -27,6 +32,7 @@ matching logic is the part that actually gets tested.
 | `notion.py` | two REST calls: query a database, PATCH a URL property |
 | `sync.py` | pairs them up, produces a `Report` |
 | `cli.py` | argparse, dotenv, device-code OAuth |
+| `api/`, `public/`, `vercel.json` | optional Vercel dashboard over the same `run_sync()` |
 
 ## Decisions that look arbitrary but are not
 
@@ -56,6 +62,18 @@ assignment order in Notion never decides who wins a contested PDF.
 
 **No rapidfuzz.** stdlib `difflib` keeps the runtime dependency list at
 `requests` alone.
+
+## Vercel dashboard (optional surface)
+
+`api/` + `public/` + `vercel.json` deploy a token-gated web UI over the same
+`run_sync()`. `api/_shared.py::authorised` accepts `APP_TOKEN` (dashboard) or
+`CRON_SECRET` (Vercel's scheduler) and **fails closed** when neither is set —
+that endpoint is publicly reachable, so an unset token must never mean open.
+`tests/test_api_auth.py` pins this along with ten other cases.
+
+Hobby cron is capped at once per day and a more frequent expression fails at
+deploy time, so GitHub Actions stays the real scheduler. Vercel is there for
+the report and the manual trigger.
 
 ## Live environment
 
