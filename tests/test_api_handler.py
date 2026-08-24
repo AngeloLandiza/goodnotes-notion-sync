@@ -95,16 +95,20 @@ def test_error_responses_are_json_content_type(server):
         assert exc.headers["Content-Type"].startswith("application/json")
 
 
-def test_handler_imports_standalone():
-    """Vercel imports api/sync.py without the repo root on sys.path.
+def test_handler_imports_with_nothing_on_sys_path():
+    """Load api/sync.py the way Vercel does: by file, with no path help.
 
-    If `from _shared import ...` only resolves because pytest happened to add
-    the directory, the deployed function raises ImportError at cold start and
-    the browser sees an HTML 500 with no JSON body at all.
+    The first version of this test inserted `api/` into sys.path itself, so it
+    passed while production raised ModuleNotFoundError on `_shared` at cold
+    start. Loading by spec, from an unrelated working directory, reproduces
+    what the platform actually does.
     """
     script = (
-        "import sys; sys.path.insert(0, %r); "
-        "import sync; print(sync.handler.__name__)" % str(ROOT / "api")
+        "import importlib.util;"
+        "spec = importlib.util.spec_from_file_location('sync', %r);"
+        "m = importlib.util.module_from_spec(spec);"
+        "spec.loader.exec_module(m);"
+        "print(m.handler.__name__)" % str(ROOT / "api" / "sync.py")
     )
     result = subprocess.run(
         [sys.executable, "-c", script],
@@ -113,6 +117,16 @@ def test_handler_imports_standalone():
         cwd=str(ROOT.parent),  # deliberately not the repo root
     )
     assert result.returncode == 0, (
-        f"api/sync.py fails to import in isolation:\n{result.stderr}"
+        f"api/sync.py cannot load the way Vercel loads it:\n{result.stderr}"
     )
     assert "handler" in result.stdout
+
+
+def test_import_failure_still_answers_with_json(server, monkeypatch):
+    """Even a broken import must not produce an HTML error page."""
+    monkeypatch.setattr(sync_module, "_IMPORT_ERROR", "ImportError: boom")
+    status, body = request(f"{server}/api/sync", method="POST")
+
+    assert status == 500
+    assert body["ok"] is False
+    assert body["raw"] == "ImportError: boom"
