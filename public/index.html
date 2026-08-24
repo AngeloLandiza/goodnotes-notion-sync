@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>GoodNotes → Notion</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #fbfbfa; --panel: #fff; --line: #e6e4e1;
+    --ink: #1d1c1a; --muted: #6d6a65;
+    --ok: #2f7d4f; --warn: #a8620f; --dim: #7b7873;
+    --accent: #2f6fed; --accent-ink: #fff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #191918; --panel: #212120; --line: #33322f;
+      --ink: #eceae6; --muted: #9d9a94;
+      --ok: #6fcf97; --warn: #e0a458; --dim: #8b8884;
+      --accent: #5c8dff; --accent-ink: #10131c;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 15px/1.55 ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif;
+    padding: 32px 20px 64px;
+  }
+  main { max-width: 780px; margin: 0 auto; }
+  h1 { font-size: 20px; margin: 0 0 4px; letter-spacing: -0.01em; }
+  .sub { color: var(--muted); font-size: 13px; margin: 0 0 24px; }
+  .bar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 24px; }
+  button {
+    font: inherit; font-weight: 550; border: 0; border-radius: 8px;
+    padding: 9px 16px; cursor: pointer;
+    background: var(--accent); color: var(--accent-ink);
+  }
+  button.ghost { background: transparent; color: var(--muted); border: 1px solid var(--line); }
+  button:disabled { opacity: .5; cursor: default; }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 10px; margin-bottom: 26px; }
+  .stat { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
+  .stat b { display: block; font-size: 22px; font-weight: 600; letter-spacing: -0.02em; }
+  .stat span { color: var(--muted); font-size: 12px; }
+  section { margin-bottom: 26px; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 10px; font-weight: 600; }
+  .item { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 11px 14px; margin-bottom: 7px; }
+  .item .t { font-weight: 550; }
+  .item .d { color: var(--muted); font-size: 13px; margin-top: 2px; word-break: break-word; }
+  .score { float: right; font-variant-numeric: tabular-nums; font-size: 12px; color: var(--dim); }
+  a { color: inherit; }
+  .empty { color: var(--muted); font-size: 13px; font-style: italic; }
+  .banner { border-radius: 10px; padding: 12px 14px; margin-bottom: 20px; font-size: 14px; border: 1px solid var(--line); background: var(--panel); }
+  .banner.err { border-color: color-mix(in srgb, var(--warn) 45%, var(--line)); }
+  input[type=password] { font: inherit; padding: 9px 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); flex: 1; min-width: 220px; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>GoodNotes → Notion</h1>
+  <p class="sub" id="sub">Enter your dashboard token to load the current state.</p>
+
+  <div id="gate" class="bar">
+    <input type="password" id="token" placeholder="APP_TOKEN" autocomplete="current-password">
+    <button id="unlock">Unlock</button>
+  </div>
+
+  <div id="app" hidden>
+    <div class="bar">
+      <button id="sync">Sync now</button>
+      <button id="refresh" class="ghost">Refresh (dry run)</button>
+      <button id="forget" class="ghost">Forget token</button>
+    </div>
+    <div id="banner" class="banner" hidden></div>
+    <div class="stats" id="stats"></div>
+    <section><h2>Linked</h2><div id="linked"></div></section>
+    <section><h2>No match</h2><div id="unmatched"></div></section>
+    <section><h2>PDFs with no assignment</h2><div id="orphans"></div></section>
+  </div>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const KEY = "gn-notion-token";
+let token = "";
+
+try { token = sessionStorage.getItem(KEY) || ""; } catch (e) { token = ""; }
+
+function esc(s) {
+  return String(s ?? "").replace(/[&<>"']/g, c =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+function banner(msg, isError) {
+  const el = $("banner");
+  if (!msg) { el.hidden = true; return; }
+  el.hidden = false;
+  el.className = "banner" + (isError ? " err" : "");
+  el.innerHTML = msg;
+}
+
+function items(node, list, render) {
+  node.innerHTML = list.length
+    ? list.map(render).join("")
+    : '<p class="empty">Nothing here.</p>';
+}
+
+function paint(data) {
+  const t = data.totals;
+  $("stats").innerHTML = [
+    ["Assignments", t.assignments], ["PDFs in Drive", t.files],
+    ["Linked", t.linked], ["No match", t.unmatched], ["Orphan PDFs", t.orphanFiles],
+  ].map(([label, n]) => `<div class="stat"><b>${n}</b><span>${label}</span></div>`).join("");
+
+  items($("linked"), data.linked, r => `
+    <div class="item"><span class="score">${r.score.toFixed(2)}</span>
+      <div class="t">${esc(r.title)}</div>
+      <div class="d">→ <a href="${esc(r.driveUrl)}" target="_blank" rel="noopener">${esc(r.path ? r.path + "/" + r.file : r.file)}</a></div>
+    </div>`);
+
+  items($("unmatched"), data.unmatched, r => `
+    <div class="item">
+      <div class="t">${esc(r.title)}</div>
+      <div class="d">${esc(r.reason)}</div>
+    </div>`);
+
+  items($("orphans"), data.orphanFiles, f => `
+    <div class="item">
+      <div class="t"><a href="${esc(f.driveUrl)}" target="_blank" rel="noopener">${esc(f.path ? f.path + "/" + f.name : f.name)}</a></div>
+      <div class="d">Rename the notebook to match an assignment title to link it.</div>
+    </div>`);
+
+  $("sub").textContent =
+    `${data.dryRun ? "Dry run" : "Synced"} · ${data.generatedAt} · ${data.elapsedSeconds}s`;
+}
+
+async function call({ dry, method }) {
+  const buttons = [$("sync"), $("refresh")];
+  buttons.forEach(b => b.disabled = true);
+  banner(dry ? "Checking…" : "Syncing…", false);
+  try {
+    const res = await fetch(`/api/sync?dry=${dry ? 1 : 0}`, {
+      method,
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const data = await res.json().catch(() => ({ ok: false, error: `HTTP ${res.status}` }));
+
+    if (res.status === 401) {
+      try { sessionStorage.removeItem(KEY); } catch (e) {}
+      $("app").hidden = true; $("gate").hidden = false;
+      $("sub").textContent = "That token was rejected.";
+      return;
+    }
+    if (!data.ok) {
+      const extra = data.missing ? `<br><code>${esc(data.missing.join(", "))}</code>` : "";
+      banner(`${esc(data.error)}${extra}`, true);
+      return;
+    }
+    banner("", false);
+    paint(data);
+  } catch (err) {
+    banner(esc(String(err)), true);
+  } finally {
+    buttons.forEach(b => b.disabled = false);
+  }
+}
+
+function unlock() {
+  token = $("token").value.trim();
+  if (!token) return;
+  try { sessionStorage.setItem(KEY, token); } catch (e) {}
+  $("gate").hidden = true; $("app").hidden = false;
+  call({ dry: true, method: "POST" });
+}
+
+$("unlock").onclick = unlock;
+$("token").addEventListener("keydown", e => { if (e.key === "Enter") unlock(); });
+$("refresh").onclick = () => call({ dry: true, method: "POST" });
+$("sync").onclick = () => {
+  if (confirm("Write links into Notion for every confident match?")) {
+    call({ dry: false, method: "POST" });
+  }
+};
+$("forget").onclick = () => {
+  try { sessionStorage.removeItem(KEY); } catch (e) {}
+  token = ""; $("app").hidden = true; $("gate").hidden = false;
+  $("token").value = ""; $("sub").textContent = "Token forgotten.";
+};
+
+if (token) { $("gate").hidden = true; $("app").hidden = false; call({ dry: true, method: "POST" }); }
+</script>
+</body>
+</html>
