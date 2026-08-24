@@ -11,6 +11,11 @@ wrote about it).
 
 Both are optional halves. Run either on its own.
 
+It deploys three ways: a CLI, a scheduled GitHub Action, and an optional Vercel
+dashboard — which itself runs either as a single-user tool configured by
+environment variables, or as a small multi-account app where people sign in
+with Google and connect their own Notion, Canvas and Drive.
+
 ## GoodNotes → Notion
 
 Link every assignment in a Notion database to the GoodNotes PDF of the same
@@ -106,6 +111,15 @@ Read-only Drive scope is all this asks for. `auth` opens your browser, listens
 on a throwaway `127.0.0.1` port for the redirect, and exchanges the code with
 PKCE. Nothing needs registering as a redirect URI — Desktop app clients accept
 any loopback port.
+
+> **Publish the consent screen, or your token dies weekly.** Google issues
+> refresh tokens that **expire after 7 days** to any app whose OAuth consent
+> screen is in `Testing` status with an external user type. The symptom is a
+> sync that works for a week and then fails with `invalid_grant`. Fix it in
+> Google Cloud Console → *OAuth consent screen* → **Publish app**. You will
+> see an "unverified app" warning when authorising — that is expected for a
+> restricted scope like `drive.readonly`, and clicking through it is fine for
+> your own account.
 
 ### 4. Configure and authorise
 
@@ -274,11 +288,14 @@ click from the Actions tab.
 
 ## Optional: Vercel dashboard
 
-`vercel.json`, `api/` and `public/` add a small web UI with a tab for each
-half: a report of what is linked, what is not, and which PDFs have no
-assignment, plus **Link PDFs now** and **Import now** buttons. GitHub Actions still does the scheduling; Vercel Hobby caps cron at
-**once per day** (a more frequent expression fails at deploy time), so it is a
-poor replacement for the 6-hourly Action but a good companion to it.
+`vercel.json`, `api/` and `public/` add a web UI over the same code. It runs in
+one of two modes, and which one you get depends on a single environment
+variable.
+
+### Single-user mode (no database)
+
+The original design. Credentials come from environment variables, the dashboard
+is gated by `APP_TOKEN`, and everything runs as you.
 
 ```bash
 vercel                    # deploy
@@ -287,47 +304,151 @@ vercel                    # deploy
 **Set Application Preset to `Other`, not `Python`.** A Python *framework*
 preset takes precedence over file-based functions: when one is detected, the
 framework app handles every request and files under `/api` never become
-functions at all. The Python preset also wants an ASGI/WSGI entrypoint
-(`app.py` exporting `app`), which this project does not have — it is a CLI with
-two thin handlers bolted on. `Other` gives the zero-config behaviour this
-layout needs: each `api/*.py` becomes a function, and `public/` is served
-statically at `/`.
+functions at all. `Other` gives the zero-config behaviour this layout needs —
+each `api/*.py` becomes a function, and `public/` is served statically at `/`.
 
-`api/_shared.py` is deliberately underscore-prefixed. Vercel skips files in
-`/api` starting with `_`, so the helper module is importable without also
-being published as its own endpoint.
+Files in `/api` starting with `_` are skipped by Vercel, which is why the two
+helper modules are named `_shared.py` and `_app.py`.
 
-Set **eight** environment variables in the project settings: the six the CLI
-uses, plus `APP_TOKEN` (the dashboard login) and `CRON_SECRET` (what Vercel
-sends on scheduled runs). Generate the last two with `openssl rand -base64 32`.
+Set the six variables the CLI uses, plus `APP_TOKEN` (the dashboard login) and
+`CRON_SECRET` (what Vercel sends on scheduled runs). Generate both with
+`openssl rand -base64 32`. Vercel does **not** create `CRON_SECRET` for you,
+contrary to what the name suggests.
 
-Add `CANVAS_TOKEN` and `NOTION_COURSES_DB` (and optionally `CANVAS_BASE_URL`,
-`CAMPUS_TIMEZONE`) to light up the dashboard's **Canvas → Notion** tab.
-Without them `/api/canvas` answers `200` with `configured: false` and the tab
-says so — deliberately not an error, so a deployment that only wants the
-GoodNotes half is never made to look broken.
+Add `CANVAS_TOKEN` and `NOTION_COURSES_DB` to light up the Canvas tab. Without
+them `/api/canvas` answers `200` with `configured: false` — deliberately not an
+error, so a deployment that only wants the GoodNotes half is never made to look
+broken.
 
-Vercel does **not** create `CRON_SECRET` for you — you add the variable, and
-Vercel then sends its value as the `Authorization` header when it invokes the
-cron. Without it, scheduled runs are rejected by the same check that protects
-the dashboard.
+> **That endpoint is public.** Every request must carry
+> `Authorization: Bearer <APP_TOKEN>` or `<CRON_SECRET>`. With neither variable
+> set the handler rejects everything rather than running open.
 
-If you import the repo from GitHub, Vercel pre-detects six names from
-`.env.example` **with the placeholder values still in them**. Replace every one
-before deploying; `GDRIVE_FOLDER_ID` is the only real value in that file.
+### Accounts mode (with a database)
 
-> **That endpoint is public.** Anyone who guesses the deployment name can reach
-> it, so every request must carry `Authorization: Bearer <APP_TOKEN>` (the
-> dashboard) or `<CRON_SECRET>` (Vercel's scheduler). With neither variable set
-> the handler rejects everything rather than running open — see
-> `tests/test_api_auth.py`.
+Set `DATABASE_URL` and the same deployment becomes multi-user: people sign in
+with Google, connect their own Notion, Canvas and Drive, and each gets their
+own sync. Nothing is shared between accounts, and you never see anyone else's
+credentials.
+
+Single-user mode is not deprecated by this — with `DATABASE_URL` unset the app
+behaves exactly as it did before accounts existed.
+
+#### 1. A database
+
+Vercel Postgres no longer exists; it moved to the Marketplace in December 2024
+and existing databases were migrated to Neon. Install any Postgres integration
+from **Vercel → Storage → Marketplace** (Neon is the default, and its free tier
+is ample here). `DATABASE_URL` is injected into the project for you.
+
+Use the **pooled** connection string. Functions open a connection per request,
+and a direct endpoint runs out of them quickly.
+
+#### 2. Secrets
+
+```bash
+python -m goodnotes_notion_sync keygen
+```
+
+That prints `APP_ENCRYPTION_KEY` and `SESSION_SECRET`. Add both in Vercel, plus:
+
+| Variable | What it is |
+|---|---|
+| `APP_BASE_URL` | `https://your-app.vercel.app` — must be stable and exact |
+| `OWNER_EMAIL` | the first address allowed to sign in |
+| `GOOGLE_CLIENT_ID` / `_SECRET` | a **Web application** OAuth client |
+| `NOTION_OAUTH_CLIENT_ID` / `_SECRET` | a **public** Notion integration |
+
+`APP_BASE_URL` cannot be a preview deployment URL. Those change on every push,
+and an OAuth redirect URI has to be registered ahead of time and matched
+exactly.
+
+Every stored credential is encrypted with `APP_ENCRYPTION_KEY` before it
+reaches Postgres. Lose that key and everyone has to reconnect; to rotate it,
+move the old value to `APP_ENCRYPTION_KEY_OLD` and old rows keep decrypting
+while new ones are written with the new key.
+
+#### 3. OAuth clients
+
+**Google** — the desktop client used by the CLI will not work for the web flow.
+Create a second one: *Credentials → Create credentials → OAuth client ID →
+**Web application***, with authorised redirect URI:
+
+```
+https://your-app.vercel.app/api/auth/google/callback
+```
+
+Scopes are `openid email profile` plus `drive.readonly`, requested together, so
+signing in *is* connecting Drive. That removes the `auth` CLI step entirely for
+web users.
+
+**Notion** — at <https://www.notion.com/my-integrations>, create (or convert)
+an integration and set its type to **Public**, with redirect URI:
+
+```
+https://your-app.vercel.app/api/auth/notion/callback
+```
+
+A public integration is what turns "create an internal integration, copy the
+token, then share each database with it" into one button. Users pick which
+pages to share in Notion's own picker, and the dashboard lists exactly those
+databases instead of asking for 32-hex ids.
+
+#### 4. Create the schema
+
+```bash
+export DATABASE_URL=... APP_ENCRYPTION_KEY=...
+python -m goodnotes_notion_sync db-migrate --owner you@example.com
+```
+
+Migrations are idempotent and safe to re-run. Then open the app and sign in;
+invite people from the **People** tab, or from the CLI:
+
+```bash
+python -m goodnotes_notion_sync invite --add classmate@uic.edu
+python -m goodnotes_notion_sync sync-all --dry-run
+```
+
+`sync-all` is what the scheduler runs. One account failing never stops the
+others, and an account that has not finished setting up is skipped quietly
+rather than reported as broken every night.
+
+### Before you invite anyone: the Google verification cliff
+
+`drive.readonly` is one of Google's **restricted** scopes, and that has
+consequences you cannot design around.
+
+- **An app in `Testing` status issues refresh tokens that expire after seven
+  days.** If your consent screen is still in Testing, every stored Drive token
+  dies weekly and the sync starts failing with `invalid_grant`. Publishing the
+  app to *In production* removes the expiry and costs nothing. **This applies
+  to single-user mode too.**
+- **Unverified apps requesting a restricted scope show a warning screen** —
+  "Google hasn't verified this app" — that each person must click through, and
+  are capped at **100 users over the project's entire lifetime**. That cap
+  cannot be reset.
+- **Real verification requires an annual third-party CASA security
+  assessment.** That is not a realistic bar for a student project.
+
+So: publish to production, keep the invite list short, and expect the warning
+screen. The invite list is not just convenience — it is what keeps the app
+inside the unverified allowance.
+
+### What you are taking on
+
+Inviting someone means holding their Notion token, their Canvas token and their
+Google refresh token. A Canvas personal access token can read everything their
+Canvas account can. They are encrypted at rest and never rendered back to any
+page, but the honest summary is that you become responsible for them. Invite
+people who know that is what they are agreeing to.
 
 ## Development
 
 ```bash
 source .venv/bin/activate     # created during setup, above
 pip install -r requirements-dev.txt
-pytest                        # 152 tests, offline, a few seconds
+pytest                        # 257 tests; the storage ones skip unless
+                              # TEST_DATABASE_URL points at a Postgres
 ```
 
 The split between suites is deliberate:
@@ -346,9 +467,26 @@ The split between suites is deliberate:
 - `tests/test_notion.py` — the property extraction the whole idempotency story
   rests on. Without it, reading `Canvas ID` back wrongly would duplicate every
   row on every run with a green suite.
+- `tests/test_webauth.py`, `tests/test_crypto.py` — sessions, CSRF and
+  encryption. Every test is named for the attack it prevents.
+- `tests/test_store.py`, `tests/test_api_accounts.py` — the accounts half,
+  against a real Postgres and real sockets: that a token is unreadable in the
+  table, that an uninvited address cannot sign in, that a member cannot invite,
+  that a session beats a stale bearer token.
 
-Nothing here touches the network, which is why it runs instantly and why it is
-worth running on every change.
+The storage and account tests need a database:
+
+```bash
+docker run -e POSTGRES_PASSWORD=x -p 5432:5432 -d postgres:16
+export TEST_DATABASE_URL=postgresql://postgres:x@localhost:5432/postgres
+pytest -q
+```
+
+Without `TEST_DATABASE_URL` they skip rather than fail, so `pytest` stays a
+one-command thing for anyone working on the matching logic. CI runs both ways.
+
+Nothing here touches the network. The only external dependency is a local
+Postgres for the storage tests, which is why they are opt-in.
 
 ## Limits
 

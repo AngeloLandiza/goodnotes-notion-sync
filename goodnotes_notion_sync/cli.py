@@ -9,11 +9,16 @@ import pathlib
 import sys
 
 
+import secrets
+
 from .canvas import DEFAULT_BASE_URL, CanvasClient, CanvasError
 from .canvas_import import DEFAULT_TIMEZONE, PropertyNames, run_canvas_import
+from .crypto import CryptoError, generate_key
+from .fanout import run_for_all
 from .drive import SCOPES, DriveClient, DriveError
 from .notion import NotionClient, NotionError
 from .oauth import OAuthError, run_local_flow
+from .store import Store, StoreError, normalise_email
 from .sync import run_sync
 
 
@@ -127,6 +132,66 @@ def cmd_canvas_import(args: argparse.Namespace) -> int:
     # An unmatched course is a silent data loss unless it is made loud: those
     # assignments are simply not imported.
     return 3 if report.unmatched_courses and not args.allow_unmatched_courses else 0
+
+
+def cmd_keygen(args: argparse.Namespace) -> int:
+    """Print the two secrets accounts mode needs. Neither is recoverable."""
+    print("# Add these to your deployment's environment variables.")
+    print("# APP_ENCRYPTION_KEY decrypts every stored credential: lose it and")
+    print("# every user has to reconnect. Changing it? Put the old value in")
+    print("# APP_ENCRYPTION_KEY_OLD so existing rows still decrypt.")
+    print(f"APP_ENCRYPTION_KEY={generate_key()}")
+    print(f"SESSION_SECRET={secrets.token_urlsafe(48)}")
+    return 0
+
+
+def _store() -> Store:
+    return Store.from_env()
+
+
+def cmd_db_migrate(args: argparse.Namespace) -> int:
+    store = _store()
+    applied = store.migrate()
+    print("Applied: " + (", ".join(applied) if applied else "nothing, already current"))
+
+    owner = normalise_email(args.owner or os.environ.get("OWNER_EMAIL", ""))
+    if owner:
+        store.ensure_owner(owner)
+        print(f"Owner: {owner}")
+    else:
+        print(
+            "No OWNER_EMAIL set. Nobody can sign in until an address is on the "
+            "invite list -- set OWNER_EMAIL or run `invite --add you@example.com`."
+        )
+    return 0
+
+
+def cmd_invite(args: argparse.Namespace) -> int:
+    store = _store()
+    if args.add:
+        print(f"Invited {store.add_invite(args.add)}")
+    if args.remove:
+        store.remove_invite(args.remove)
+        print(f"Removed {normalise_email(args.remove)}")
+    rows = store.list_invites()
+    print(f"\n{len(rows)} invited:")
+    for row in rows:
+        mark = "signed in" if row["signed_in_as"] else "not yet"
+        print(f"  {row['email']:<40} {mark}")
+    return 0
+
+
+def cmd_sync_all(args: argparse.Namespace) -> int:
+    """What the scheduler runs once accounts exist."""
+    report = run_for_all(
+        _store(), dry_run=args.dry_run, only_email=args.only or ""
+    )
+    text = report.to_text()
+    print(text)
+    _write_summary("Scheduled sync", text)
+    # Non-zero so a failing account is visible in the Actions tab, but only
+    # after every other account has had its run.
+    return 1 if report.failures else 0
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -256,10 +321,49 @@ def build_parser() -> argparse.ArgumentParser:
     )
     canvas.set_defaults(func=cmd_canvas_import)
 
+    keygen = sub.add_parser(
+        "keygen",
+        parents=[common],
+        help="print the secrets multi-user mode needs",
+    )
+    keygen.set_defaults(func=cmd_keygen)
+
+    migrate = sub.add_parser(
+        "db-migrate",
+        parents=[common],
+        help="create or update the database schema",
+    )
+    migrate.add_argument("--owner", help="email allowed to sign in first")
+    migrate.set_defaults(func=cmd_db_migrate)
+
+    invite = sub.add_parser(
+        "invite", parents=[common], help="manage who may sign in"
+    )
+    invite.add_argument("--add", metavar="EMAIL")
+    invite.add_argument("--remove", metavar="EMAIL")
+    invite.set_defaults(func=cmd_invite)
+
+    every = sub.add_parser(
+        "sync-all",
+        parents=[common],
+        help="run every account's syncs (what the scheduler calls)",
+    )
+    every.add_argument("--only", metavar="EMAIL", help="just this account")
+    every.add_argument("-n", "--dry-run", action="store_true")
+    every.set_defaults(func=cmd_sync_all)
+
     return parser
 
 
-SUBCOMMANDS = ("auth", "sync", "canvas-import")
+SUBCOMMANDS = (
+    "auth",
+    "sync",
+    "canvas-import",
+    "keygen",
+    "db-migrate",
+    "invite",
+    "sync-all",
+)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -288,7 +392,8 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         return args.func(args)
-    except (CanvasError, DriveError, NotionError, OAuthError) as exc:
+    except (CanvasError, CryptoError, DriveError, NotionError, OAuthError,
+            StoreError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
 

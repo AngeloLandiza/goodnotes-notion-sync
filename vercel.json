@@ -2,19 +2,26 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "functions": {
     "api/*.py": {
-      "maxDuration": 60,
+      "maxDuration": 300,
       "includeFiles": "goodnotes_notion_sync/**"
     }
   },
-  "crons": [
-    { "path": "/api/sync", "schedule": "0 7 * * *" }
+  "rewrites": [
+    { "source": "/api/auth/google/start", "destination": "/api/auth?action=google-start" },
+    { "source": "/api/auth/google/callback", "destination": "/api/auth?action=google-callback" },
+    { "source": "/api/auth/notion/start", "destination": "/api/auth?action=notion-start" },
+    { "source": "/api/auth/notion/callback", "destination": "/api/auth?action=notion-callback" },
+    { "source": "/api/auth/logout", "destination": "/api/auth?action=logout" }
   ],
+  "crons": [{ "path": "/api/sync", "schedule": "0 7 * * *" }],
   "headers": [
     {
       "source": "/(.*)",
       "headers": [
         { "key": "X-Robots-Tag", "value": "noindex, nofollow" },
-        { "key": "Referrer-Policy", "value": "no-referrer" }
+        { "key": "Referrer-Policy", "value": "no-referrer" },
+        { "key": "X-Content-Type-Options", "value": "nosniff" },
+        { "key": "X-Frame-Options", "value": "DENY" }
       ]
     }
   ]

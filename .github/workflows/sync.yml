@@ -32,6 +32,21 @@ jobs:
 
       - run: pip install -r requirements.txt
 
+      # Multi-user deployments keep every account's credentials in Postgres,
+      # so the scheduler's job is "sync everyone" rather than "sync me". When
+      # DATABASE_URL is set that one step replaces both of the ones below.
+      - name: Sync every account
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          APP_ENCRYPTION_KEY: ${{ secrets.APP_ENCRYPTION_KEY }}
+          APP_ENCRYPTION_KEY_OLD: ${{ secrets.APP_ENCRYPTION_KEY_OLD }}
+          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+        if: env.DATABASE_URL != ''
+        run: |
+          python -m goodnotes_notion_sync sync-all \
+            ${{ inputs.dry_run && '--dry-run' || '' }}
+
       # Canvas first: rows it creates are then available to the GoodNotes
       # matcher in the same run, so a new assignment and its notebook can link
       # up without waiting six hours for the next pass.
@@ -42,24 +57,27 @@ jobs:
       - name: Import from Canvas
         continue-on-error: true
         env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
           CANVAS_TOKEN: ${{ secrets.CANVAS_TOKEN }}
           CANVAS_BASE_URL: ${{ secrets.CANVAS_BASE_URL }}
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
           NOTION_ASSIGNMENTS_DB: ${{ secrets.NOTION_ASSIGNMENTS_DB }}
           NOTION_COURSES_DB: ${{ secrets.NOTION_COURSES_DB }}
-        if: env.CANVAS_TOKEN != ''
+        if: env.CANVAS_TOKEN != '' && env.DATABASE_URL == ''
         run: |
           python -m goodnotes_notion_sync canvas-import \
             ${{ inputs.dry_run && '--dry-run' || '' }}
 
       - name: Sync
         env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
           NOTION_ASSIGNMENTS_DB: ${{ secrets.NOTION_ASSIGNMENTS_DB }}
           GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
           GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
           GOOGLE_REFRESH_TOKEN: ${{ secrets.GOOGLE_REFRESH_TOKEN }}
           GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
+        if: env.DATABASE_URL == ''
         run: |
           python -m goodnotes_notion_sync sync \
             ${{ inputs.dry_run && '--dry-run' || '' }} \

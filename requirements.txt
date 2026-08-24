@@ -1,1 +1,7 @@
 requests>=2.31
+
+# Accounts mode only (the Vercel deployment with a database). The CLI in
+# single-user mode never imports these -- both are loaded lazily -- so a local
+# install can skip them if all you want is `sync` and `canvas-import`.
+cryptography>=42.0
+psycopg[binary]>=3.1

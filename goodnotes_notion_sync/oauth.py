@@ -18,6 +18,8 @@ Standard library only.
 from __future__ import annotations
 
 import base64
+import dataclasses
+import json
 import hashlib
 import http.server
 import secrets
@@ -82,7 +84,58 @@ def build_auth_url(
     return f"{AUTH_URL}?{urllib.parse.urlencode(params)}"
 
 
-def exchange_code(
+@dataclasses.dataclass(frozen=True)
+class GoogleIdentity:
+    """Who signed in, from the id_token that came back with the code."""
+
+    sub: str
+    email: str
+    email_verified: bool
+    name: str = ""
+    picture: str = ""
+
+
+def decode_id_token(id_token: str) -> GoogleIdentity:
+    """Read the claims out of Google's id_token.
+
+    The signature is deliberately not checked. This token did not arrive from
+    the browser -- it came back in the body of a TLS request *we* made to
+    Google's token endpoint, using our own client secret. Google's own guidance
+    is that a token obtained that way needs no local validation; the channel
+    already proves the issuer. Verifying it would mean fetching and caching
+    JWKS on every cold start for no additional assurance.
+
+    An id_token arriving by any other route must never be passed to this.
+    """
+    parts = (id_token or "").split(".")
+    if len(parts) != 3:
+        raise OAuthError("Google returned a malformed id_token")
+    try:
+        raw = parts[1]
+        payload = json.loads(
+            base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4))
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise OAuthError(f"Could not read Google's id_token: {exc}") from exc
+
+    email = str(payload.get("email", "")).strip().lower()
+    if not email:
+        raise OAuthError(
+            "Google did not return an email address. The 'email' scope is "
+            "required to know who is signing in."
+        )
+    return GoogleIdentity(
+        sub=str(payload.get("sub", "")),
+        email=email,
+        # Google sends this as a bool or the string "true" depending on age.
+        email_verified=str(payload.get("email_verified", "")).lower() in ("true", "1")
+        or payload.get("email_verified") is True,
+        name=str(payload.get("name", "")),
+        picture=str(payload.get("picture", "")),
+    )
+
+
+def exchange_code_full(
     *,
     client_id: str,
     client_secret: str,
@@ -90,8 +143,8 @@ def exchange_code(
     verifier: str,
     redirect_uri: str,
     session: requests.Session | None = None,
-) -> str:
-    """Swap the authorisation code for a refresh token."""
+) -> dict:
+    """The whole token response: refresh_token, access_token, id_token."""
     http = session or requests
     response = http.post(
         TOKEN_URL,
@@ -111,6 +164,12 @@ def exchange_code(
             f"Token exchange failed ({response.status_code}): "
             f"{payload.get('error')} - {payload.get('error_description')}"
         )
+    return payload
+
+
+def exchange_code(**kwargs) -> str:
+    """Swap the authorisation code for a refresh token."""
+    payload = exchange_code_full(**kwargs)
     token = payload.get("refresh_token")
     if not token:
         raise OAuthError(

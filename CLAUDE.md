@@ -15,12 +15,23 @@ Neither writes back to its source. Nothing is ever deleted.
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements-dev.txt
-pytest                                     # 152 tests, offline, ~4s
+pytest                                     # 256 tests; storage ones skip
+                                           # without TEST_DATABASE_URL
 python -m goodnotes_notion_sync --dry-run  # report without writing
 python -m goodnotes_notion_sync            # write links
 python -m goodnotes_notion_sync auth       # mint a Google refresh token
 python -m goodnotes_notion_sync canvas-import --dry-run
 python -m goodnotes_notion_sync canvas-import
+
+# accounts mode
+python -m goodnotes_notion_sync keygen        # APP_ENCRYPTION_KEY, SESSION_SECRET
+python -m goodnotes_notion_sync db-migrate --owner you@example.com
+python -m goodnotes_notion_sync invite --add classmate@uic.edu
+python -m goodnotes_notion_sync sync-all --dry-run
+
+# storage tests need a database; they skip without one
+docker run -e POSTGRES_PASSWORD=x -p 5432:5432 -d postgres:16
+export TEST_DATABASE_URL=postgresql://postgres:x@localhost:5432/postgres
 ```
 
 Always work inside the venv. This machine is macOS with Homebrew Python, so a
@@ -37,6 +48,12 @@ matching logic is the part that actually gets tested.
 |---|---|
 | `matching.py` | normalise + score filenames against titles. The only interesting logic. Pure, no I/O. |
 | `canvas.py` | read-only Canvas REST: courses, assignments, Link-header pagination |
+| `config.py` | `RunConfig`: one user's credentials, from env **or** the database |
+| `store.py` | Postgres: users, invites, encrypted connections, settings, runs |
+| `crypto.py` | Fernet over `APP_ENCRYPTION_KEY`, with rotation |
+| `webauth.py` | signed session cookies and CSRF, stdlib only |
+| `notion_oauth.py` | Notion public-integration flow |
+| `fanout.py` | run every account's jobs; one failure never stops the rest |
 | `canvas_import.py` | Canvas -> Notion mapping and the create/update/adopt decision |
 | `drive.py` | read-only recursive Drive walk, returns `Candidate`s |
 | `notion.py` | query a database, create a page, PATCH properties |
@@ -125,6 +142,49 @@ a large run mid-write, with the wrong explanation.
 final mark. Writing it into `Weight` would corrupt the grade rollups that the
 Courses database computes from it.
 
+## Accounts mode
+
+`DATABASE_URL` is the switch. Unset, the app is exactly what it was: one user,
+environment variables, `APP_TOKEN`. Set, it grows Google sign-in, per-user
+credentials in Postgres and an invite list. **Nothing may break the unset
+path** -- that is the deployment that is already working.
+
+Decisions in this half:
+
+**Secrets are encrypted before they reach Postgres, with no plaintext
+fallback.** Once this holds a classmate's Canvas token, a database dump is a
+breach of their LMS account, not an inconvenience. `SecretBox` raises when no
+key is configured rather than degrading.
+
+**`connection_status()` never decrypts.** It is what the dashboard renders, so
+the *query* omits the secret column rather than the serialiser filtering it.
+
+**The session is checked before the bearer token.** A browser can send both. If
+the token branch won, a signed-in request would run against the deployment's
+environment credentials instead of that person's -- writing one account's
+assignments into whatever database the env vars name.
+
+**CSRF is a token in the signed session cookie, echoed in a header.** The
+cookie is `SameSite=Lax`, not `Strict`, because Strict withholds the cookie on
+the OAuth provider's redirect back and the callback could never find its state.
+Lax alone is not a guarantee, so the header check is the real defence. Dry runs
+are exempt: they never write, and requiring one would stop the dashboard
+painting on load.
+
+**`save_settings` has an allow-list because it interpolates keys into SQL.**
+Values are parameterised; column names cannot be. `test_a_field_name_cannot_smuggle_sql`
+is the reason that list exists.
+
+**A non-owner gets 404 from `/api/invites`, not 403.** They do not need to
+learn that an invite system exists, let alone who is on it.
+
+**An owner cannot be uninvited.** One misclick would otherwise lock everyone
+out permanently.
+
+**A re-authorisation with no `refresh_token` leaves the stored one alone.**
+Google omits it when it considers the client already authorised; writing that
+absence through would silently disconnect Drive.
+
 **Tokens are compared as bytes.** `hmac.compare_digest` raises `TypeError`
 on a non-ASCII `str`, and `authorised()` runs *outside* the handler's try
 block -- so one curl with an accent in the token crashed the function instead
@@ -187,6 +247,21 @@ Two deployment settings that are easy to get wrong:
   distinguishes "no Notion match" from "no assignments found".
 - The assignments database is currently **empty**, so a live sync links nothing
   until the Canvas import (or a person) creates rows.
+
+## Google OAuth reality check
+
+`drive.readonly` is a **restricted** scope. Consequences, none of them
+optional:
+
+- An app in **Testing** publishing status issues refresh tokens that **expire
+  after 7 days**. Publishing to *In production* removes that. This bites the
+  single-user setup too.
+- Unverified apps requesting a restricted scope show the "Google hasn't
+  verified this app" screen and are capped at **100 users for the project's
+  lifetime**. The cap cannot be reset.
+- Real verification for a restricted scope requires an annual third-party CASA
+  security assessment. Not realistic here. The invite list is what keeps the
+  app inside the unverified allowance.
 
 ## Ideas not yet built
 

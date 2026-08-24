@@ -154,3 +154,66 @@ def test_missing_refresh_token_explains_the_reauthorisation_fix():
     session = FakeSession(FakeResponse(200, {"access_token": "ya29.only"}))
     with pytest.raises(OAuthError, match="revoke"):
         exchange(session)
+
+
+# -- the id_token that says who signed in -----------------------------------
+
+import base64 as _b64  # noqa: E402
+import json as _json  # noqa: E402
+
+from goodnotes_notion_sync.oauth import decode_id_token  # noqa: E402
+
+
+def _id_token(claims: dict) -> str:
+    def part(obj):
+        raw = _json.dumps(obj).encode()
+        return _b64.urlsafe_b64encode(raw).decode().rstrip("=")
+
+    return f"{part({'alg': 'RS256'})}.{part(claims)}.signature-not-checked"
+
+
+def test_the_identity_comes_out_of_the_claims():
+    token = _id_token(
+        {
+            "sub": "1234",
+            "email": "Angelo@Example.com",
+            "email_verified": True,
+            "name": "Angelo",
+            "picture": "https://pic",
+        }
+    )
+    identity = decode_id_token(token)
+
+    assert identity.sub == "1234"
+    assert identity.email == "angelo@example.com", "lowercased to match invites"
+    assert identity.email_verified is True
+    assert identity.name == "Angelo"
+
+
+def test_email_verified_is_accepted_as_a_string_too():
+    """Google has sent this as the string "true" as well as a bool."""
+    assert decode_id_token(_id_token({"email": "a@b.c", "email_verified": "true"})).email_verified
+    assert not decode_id_token(_id_token({"email": "a@b.c", "email_verified": "false"})).email_verified
+
+
+def test_an_unverified_email_is_reported_as_unverified():
+    identity = decode_id_token(_id_token({"email": "a@b.c", "email_verified": False}))
+    assert identity.email_verified is False
+
+
+def test_a_token_with_no_email_is_rejected():
+    """The email is the join to the invite list; without it there is no
+    identity to check, so this must fail rather than default to something."""
+    with pytest.raises(OAuthError):
+        decode_id_token(_id_token({"sub": "1234"}))
+
+
+@pytest.mark.parametrize("bad", ["", "not-a-jwt", "a.b", "a.b.c.d"])
+def test_a_malformed_id_token_is_rejected(bad):
+    with pytest.raises(OAuthError):
+        decode_id_token(bad)
+
+
+def test_undecodable_claims_are_rejected():
+    with pytest.raises(OAuthError):
+        decode_id_token("header.!!!not-base64!!!.sig")

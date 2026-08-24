@@ -214,6 +214,39 @@ class NotionClient:
         log.info("Loaded %d course(s) from Notion", len(out))
         return out
 
+    def databases(self, query: str = "") -> list[dict]:
+        """Every database this token can see: ``[{id, title, url}]``.
+
+        After an OAuth connect the user has already chosen which pages to
+        share, so this is how the dashboard offers a pick-list instead of
+        asking someone to find a 32-hex id in a URL.
+        """
+        out: list[dict] = []
+        cursor: str | None = None
+        while True:
+            body: dict[str, Any] = {
+                "filter": {"value": "database", "property": "object"},
+                "page_size": 100,
+            }
+            if query:
+                body["query"] = query
+            if cursor:
+                body["start_cursor"] = cursor
+            payload = self._request("POST", "/search", json=body)
+            for item in payload.get("results", []):
+                out.append(
+                    {
+                        "id": item.get("id", ""),
+                        "title": _plain_text(item.get("title")) or "Untitled",
+                        "url": item.get("url", ""),
+                    }
+                )
+            if not payload.get("has_more"):
+                break
+            cursor = payload.get("next_cursor")
+        out.sort(key=lambda d: d["title"].lower())
+        return out
+
     # -- writes -------------------------------------------------------------
 
     def set_url(self, page_id: str, property_name: str, url: str) -> None:

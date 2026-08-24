@@ -27,18 +27,25 @@
     font: 15px/1.55 ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif;
     padding: 32px 20px 64px;
   }
-  main { max-width: 780px; margin: 0 auto; }
+  main { max-width: 820px; margin: 0 auto; }
   h1 { font-size: 20px; margin: 0 0 4px; letter-spacing: -0.01em; }
   .sub { color: var(--muted); font-size: 13px; margin: 0 0 24px; }
-  .bar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 24px; }
+  .bar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 20px; }
   button {
     font: inherit; font-weight: 550; border: 0; border-radius: 8px;
     padding: 9px 16px; cursor: pointer;
     background: var(--accent); color: var(--accent-ink);
   }
   button.ghost { background: transparent; color: var(--muted); border: 1px solid var(--line); }
+  button.danger { background: transparent; color: var(--warn); border: 1px solid var(--line); }
   button:disabled { opacity: .5; cursor: default; }
-  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 10px; margin-bottom: 26px; }
+  a.button {
+    display: inline-block; text-decoration: none; font-weight: 550;
+    border-radius: 8px; padding: 9px 16px;
+    background: var(--accent); color: var(--accent-ink);
+  }
+  a.button.ghost { background: transparent; color: var(--muted); border: 1px solid var(--line); }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 10px; margin-bottom: 22px; }
   .stat { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
   .stat b { display: block; font-size: 22px; font-weight: 600; letter-spacing: -0.02em; }
   .stat span { color: var(--muted); font-size: 12px; }
@@ -47,77 +54,53 @@
   .item { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 11px 14px; margin-bottom: 7px; }
   .item .t { font-weight: 550; }
   .item .d { color: var(--muted); font-size: 13px; margin-top: 2px; word-break: break-word; }
+  .row { display: flex; align-items: center; gap: 12px; justify-content: space-between; flex-wrap: wrap; }
   .score { float: right; font-variant-numeric: tabular-nums; font-size: 12px; color: var(--dim); }
   a { color: inherit; }
   .empty { color: var(--muted); font-size: 13px; font-style: italic; }
   .banner { border-radius: 10px; padding: 12px 14px; margin-bottom: 20px; font-size: 14px; border: 1px solid var(--line); background: var(--panel); }
   .banner.err { border-color: color-mix(in srgb, var(--warn) 45%, var(--line)); }
-  input[type=password] { font: inherit; padding: 9px 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); flex: 1; min-width: 220px; }
+  input, select {
+    font: inherit; padding: 9px 12px; border-radius: 8px;
+    border: 1px solid var(--line); background: var(--panel); color: var(--ink);
+    min-width: 0; width: 100%;
+  }
   code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; }
-  .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin-bottom: 20px; }
+  .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin-bottom: 20px; flex-wrap: wrap; }
   .tabs button {
     background: transparent; color: var(--muted); border-radius: 8px 8px 0 0;
     border-bottom: 2px solid transparent; padding: 8px 14px; font-weight: 550;
   }
   .tabs button[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--accent); }
-  .note { color: var(--muted); font-size: 13px; margin: 0 0 18px; }
+  .note { color: var(--muted); font-size: 13px; margin: 0 0 16px; }
+  .grid { display: grid; gap: 12px; }
+  .field { display: grid; gap: 5px; margin-bottom: 12px; }
+  .field label { font-size: 12.5px; color: var(--muted); font-weight: 550; }
+  .pill { font-size: 12px; padding: 2px 9px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
+  .pill.on { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 45%, var(--line)); }
+  .who { display: flex; align-items: center; gap: 10px; }
+  .who img { width: 28px; height: 28px; border-radius: 50%; }
+  .hero { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 26px; text-align: center; }
+  .hero p { color: var(--muted); font-size: 14px; }
 </style>
 </head>
 <body>
 <main>
-  <h1>Academic OS sync</h1>
-  <p class="sub" id="sub">Enter your dashboard token to load the current state.</p>
-
-  <div id="gate" class="bar">
-    <input type="password" id="token" placeholder="APP_TOKEN" autocomplete="current-password">
-    <button id="unlock">Unlock</button>
+  <div class="row" style="margin-bottom:6px">
+    <h1>Academic OS sync</h1>
+    <div id="who"></div>
   </div>
-
-  <div id="app" hidden>
-    <div class="tabs" role="tablist">
-      <button id="tab-notes" role="tab" aria-selected="true">GoodNotes → Notion</button>
-      <button id="tab-canvas" role="tab" aria-selected="false">Canvas → Notion</button>
-    </div>
-
-    <div id="banner" class="banner" hidden></div>
-
-    <div id="panel-notes">
-      <div class="bar">
-        <button id="sync">Link PDFs now</button>
-        <button id="refresh" class="ghost">Refresh (dry run)</button>
-        <button id="forget" class="ghost">Forget token</button>
-      </div>
-      <div class="stats" id="stats"></div>
-      <section><h2>Linked</h2><div id="linked"></div></section>
-      <section><h2>No match</h2><div id="unmatched"></div></section>
-      <section><h2>PDFs with no assignment</h2><div id="orphans"></div></section>
-    </div>
-
-    <div id="panel-canvas" hidden>
-      <div class="bar">
-        <button id="cimport">Import now</button>
-        <button id="ccheck" class="ghost">Check (dry run)</button>
-      </div>
-      <p class="note">
-        Creates a Notion row per Canvas assignment and keeps due dates in step.
-        Titles are written once, on creation, and never rewritten — so renaming
-        a row to match a GoodNotes notebook sticks.
-      </p>
-      <div class="stats" id="cstats"></div>
-      <section><h2>New</h2><div id="ccreated"></div></section>
-      <section><h2>Due date changed</h2><div id="cupdated"></div></section>
-      <section><h2>Matched an existing row</h2><div id="cadopted"></div></section>
-      <section><h2>Canvas courses with no Notion match</h2><div id="ccourses"></div></section>
-    </div>
-  </div>
+  <p class="sub" id="sub">Loading…</p>
+  <div id="banner" class="banner" hidden></div>
+  <div id="root"></div>
 </main>
 
 <script>
 const $ = (id) => document.getElementById(id);
-const KEY = "gn-notion-token";
-let token = "";
-
-try { token = sessionStorage.getItem(KEY) || ""; } catch (e) { token = ""; }
+let state = null;
+let view = "status";
+let legacyToken = "";
+try { legacyToken = sessionStorage.getItem("gn-notion-token") || ""; } catch (e) {}
 
 function esc(s) {
   return String(s ?? "").replace(/[&<>"']/g, c =>
@@ -132,205 +115,431 @@ function banner(msg, isError) {
   el.innerHTML = msg;
 }
 
-function items(node, list, render) {
-  node.innerHTML = list.length
-    ? list.map(render).join("")
-    : '<p class="empty">Nothing here.</p>';
-}
+// ---------------------------------------------------------------- transport
 
-function paint(data) {
-  const t = data.totals;
-  $("stats").innerHTML = [
-    ["Assignments", t.assignments], ["PDFs in Drive", t.files],
-    ["Linked", t.linked], ["No match", t.unmatched], ["Orphan PDFs", t.orphanFiles],
-  ].map(([label, n]) => `<div class="stat"><b>${n}</b><span>${label}</span></div>`).join("");
+async function api(path, { method = "GET", body } = {}) {
+  const headers = {};
+  if (body) headers["Content-Type"] = "application/json";
+  // The session cookie is HttpOnly, so the CSRF token is handed to us by
+  // /api/me and echoed back here. A cross-site page can make the browser send
+  // the cookie but cannot read this value.
+  if (state && state.csrf) headers["X-CSRF-Token"] = state.csrf;
+  if (!state?.signedIn && legacyToken) headers["Authorization"] = `Bearer ${legacyToken}`;
 
-  items($("linked"), data.linked, r => `
-    <div class="item"><span class="score">${r.score.toFixed(2)}</span>
-      <div class="t">${esc(r.title)}</div>
-      <div class="d">→ <a href="${esc(r.driveUrl)}" target="_blank" rel="noopener">${esc(r.path ? r.path + "/" + r.file : r.file)}</a></div>
-    </div>`);
-
-  items($("unmatched"), data.unmatched, r => `
-    <div class="item">
-      <div class="t">${esc(r.title)}</div>
-      <div class="d">${esc(r.reason)}</div>
-    </div>`);
-
-  items($("orphans"), data.orphanFiles, f => `
-    <div class="item">
-      <div class="t"><a href="${esc(f.driveUrl)}" target="_blank" rel="noopener">${esc(f.path ? f.path + "/" + f.name : f.name)}</a></div>
-      <div class="d">Rename the notebook to match an assignment title to link it.</div>
-    </div>`);
-
-  $("sub").textContent =
-    `${data.dryRun ? "Dry run" : "Synced"} · ${data.generatedAt} · ${data.elapsedSeconds}s`;
-}
-
-async function call({ dry, method }) {
-  const buttons = [$("sync"), $("refresh")];
-  buttons.forEach(b => b.disabled = true);
-  banner(dry ? "Checking…" : "Syncing…", false);
+  const res = await fetch(path, { method, headers, body: body ? JSON.stringify(body) : undefined });
+  const text = await res.text();
   try {
-    const res = await fetch(`/api/sync?dry=${dry ? 1 : 0}`, {
-      method,
-      headers: { Authorization: `Bearer ${token}` },
-    });
-
+    return { status: res.status, data: JSON.parse(text) };
+  } catch {
     // A non-JSON body means the function raised before it could reply --
-    // almost always a cold-start ImportError. Say so, and keep the first
-    // chunk of the response, instead of showing a bare status code.
-    const text = await res.text();
-    let data;
-    try {
-      data = JSON.parse(text);
-    } catch {
-      data = {
+    // almost always a cold-start ImportError.
+    return {
+      status: res.status,
+      data: {
         ok: false,
         error: `HTTP ${res.status} — the function crashed before replying. `
              + `The traceback is in Vercel → your project → Logs.`,
         raw: text.slice(0, 400),
-      };
-    }
-
-    if (res.status === 401) { lock("That token was rejected."); return; }
-    if (!data.ok) {
-      let extra = "";
-      if (data.missing) extra = `<br><code>${esc(data.missing.join(", "))}</code>`;
-      else if (data.raw) extra = `<br><code>${esc(data.raw)}</code>`;
-      banner(`${esc(data.error)}${extra}`, true);
-      return;
-    }
-    banner("", false);
-    paint(data);
-  } catch (err) {
-    banner(esc(String(err)), true);
-  } finally {
-    buttons.forEach(b => b.disabled = false);
+      },
+    };
   }
 }
 
-function paintCanvas(data) {
-  if (data.configured === false) {
-    $("cstats").innerHTML = "";
-    ["ccreated", "cupdated", "cadopted", "ccourses"].forEach(id => { $(id).innerHTML = ""; });
-    banner(
-      "Canvas is not configured for this deployment.<br><code>"
-      + esc((data.missing || []).join(", ")) + "</code>", true);
+async function load(withDatabases) {
+  const { data } = await api(`/api/me${withDatabases ? "?databases=1" : ""}`);
+  state = data;
+  render();
+}
+
+// ------------------------------------------------------------------ pieces
+
+function connectionCard(key, title, description, extra) {
+  const conn = (state.connections || {})[key] || {};
+  const on = !!conn.connected;
+  const meta = conn.metadata || {};
+  const detail = on
+    ? (meta.workspace_name ? `Workspace: ${esc(meta.workspace_name)}` : "Connected")
+    : esc(description);
+  return `
+    <div class="item">
+      <div class="row">
+        <div>
+          <div class="t">${esc(title)}</div>
+          <div class="d">${detail}</div>
+        </div>
+        <div class="row" style="gap:8px">
+          <span class="pill ${on ? "on" : ""}">${on ? "connected" : "not connected"}</span>
+          ${extra || ""}
+        </div>
+      </div>
+    </div>`;
+}
+
+function statusView() {
+  const ready = state.ready || {};
+  const runs = state.runs || [];
+  return `
+    <section>
+      <h2>Connections</h2>
+      ${connectionCard("google", "Google Drive", "Needed to read your GoodNotes backup.",
+        `<a class="button ghost" href="/api/auth/google/start">Re-authorize</a>`)}
+      ${connectionCard("notion", "Notion", "Where your assignments live.",
+        state.notionOAuthReady
+          ? `<a class="button ghost" href="/api/auth/notion/start">${
+              (state.connections.notion || {}).connected ? "Reconnect" : "Connect"}</a>`
+          : `<span class="pill">OAuth not configured</span>`)}
+      ${connectionCard("canvas", "Canvas", "A personal access token from your school's Canvas.",
+        `<button class="ghost" onclick="show('settings')">Set token</button>`)}
+    </section>
+
+    <section>
+      <h2>Run</h2>
+      <div class="bar">
+        <button ${ready.canvas ? "" : "disabled"} onclick="runJob('canvas', false)">Import from Canvas</button>
+        <button ${ready.goodnotes ? "" : "disabled"} onclick="runJob('sync', false)">Link GoodNotes PDFs</button>
+        <button class="ghost" ${ready.canvas ? "" : "disabled"} onclick="runJob('canvas', true)">Canvas dry run</button>
+        <button class="ghost" ${ready.goodnotes ? "" : "disabled"} onclick="runJob('sync', true)">Sync dry run</button>
+      </div>
+      ${ready.canvas || ready.goodnotes ? "" :
+        `<p class="note">Connect Notion and pick your databases in Settings to enable these.</p>`}
+      <div id="result"></div>
+    </section>
+
+    <section>
+      <h2>Recent runs</h2>
+      ${runs.length ? runs.map(r => `
+        <div class="item">
+          <div class="row">
+            <div>
+              <div class="t">${esc(r.kind === "canvas" ? "Canvas import" : "GoodNotes sync")}</div>
+              <div class="d">${r.ok
+                ? esc(Object.entries(r.summary || {}).map(([k, v]) => `${k}=${v}`).join(", ") || "no changes")
+                : esc(r.error)}</div>
+            </div>
+            <span class="pill ${r.ok ? "on" : ""}">${esc(r.finishedAt.slice(0, 16).replace("T", " "))}</span>
+          </div>
+        </div>`).join("") : `<p class="empty">Nothing has run yet.</p>`}
+    </section>`;
+}
+
+function settingsView() {
+  const s = state.settings || {};
+  const dbs = state.notionDatabases;
+  const picker = (id, value) => {
+    if (!dbs) return `<input id="${id}" value="${esc(value)}" placeholder="32-hex database id">`;
+    const options = [`<option value="">— choose —</option>`].concat(
+      dbs.map(d => `<option value="${esc(d.id)}"${d.id === value ? " selected" : ""}>${esc(d.title)}</option>`));
+    if (value && !dbs.some(d => d.id === value)) {
+      options.push(`<option value="${esc(value)}" selected>${esc(value)} (not shared with this connection)</option>`);
+    }
+    return `<select id="${id}">${options.join("")}</select>`;
+  };
+
+  return `
+    <section>
+      <h2>Notion databases</h2>
+      ${state.connections.notion?.connected
+        ? (dbs
+            ? `<p class="note">${dbs.length} database(s) shared with this connection. Not seeing one? Open it in Notion → ⋯ → Connections.</p>`
+            : `<p class="note">${state.notionDatabasesError
+                 ? "Could not list databases: " + esc(state.notionDatabasesError)
+                 : "Paste ids, or <a href='#' onclick='load(true);return false'>load the list from Notion</a>."}</p>`)
+        : `<p class="note">Connect Notion first.</p>`}
+      <div class="field"><label for="assignmentsDb">Assignments &amp; Exams</label>${picker("assignmentsDb", s.assignmentsDb || "")}</div>
+      <div class="field"><label for="coursesDb">Courses</label>${picker("coursesDb", s.coursesDb || "")}</div>
+    </section>
+
+    <section>
+      <h2>GoodNotes</h2>
+      <div class="field">
+        <label for="driveFolderId">Drive backup folder (id, URL, or exact name)</label>
+        <input id="driveFolderId" value="${esc(s.driveFolderId || "")}" placeholder="1Y0qfN…">
+      </div>
+    </section>
+
+    <section>
+      <h2>Canvas</h2>
+      <p class="note">
+        Canvas → Account → Settings → New Access Token. Stored encrypted; it is
+        never shown again and never sent back to this page.
+      </p>
+      <div class="field">
+        <label for="canvasBaseUrl">Canvas host</label>
+        <input id="canvasBaseUrl" value="${esc(s.canvasBaseUrl || "")}" placeholder="https://canvas.uic.edu">
+      </div>
+      <div class="field">
+        <label for="canvasToken">Access token ${state.connections.canvas?.connected ? "(leave blank to keep the current one)" : ""}</label>
+        <input id="canvasToken" type="password" autocomplete="off" placeholder="${state.connections.canvas?.connected ? "•••••••• stored" : "paste token"}">
+      </div>
+      <div class="field">
+        <label for="campusTimezone">Campus timezone</label>
+        <input id="campusTimezone" value="${esc(s.campusTimezone || "")}" placeholder="America/Chicago">
+      </div>
+    </section>
+
+    <section>
+      <h2>Scheduling</h2>
+      <div class="item"><div class="row">
+        <div>
+          <div class="t">Include me in the scheduled run</div>
+          <div class="d">The nightly job skips accounts with this off.</div>
+        </div>
+        <input type="checkbox" id="autoSync" ${s.autoSync ? "checked" : ""} style="width:auto">
+      </div></div>
+    </section>
+
+    <div class="bar">
+      <button onclick="saveSettings()">Save</button>
+      <button class="ghost" onclick="show('status')">Cancel</button>
+      ${state.connections.canvas?.connected
+        ? `<button class="danger" onclick="disconnect('canvas')">Remove Canvas token</button>` : ""}
+      ${state.connections.notion?.connected
+        ? `<button class="danger" onclick="disconnect('notion')">Disconnect Notion</button>` : ""}
+    </div>`;
+}
+
+function invitesView() {
+  const invites = state.invites || [];
+  return `
+    <section>
+      <h2>Who can sign in</h2>
+      <p class="note">
+        Only these addresses can create an account. Everyone signs in with
+        Google and connects their own Notion, Canvas and Drive — you never see
+        their credentials, and they never see yours.
+      </p>
+      <div class="bar">
+        <input id="inviteEmail" placeholder="classmate@uic.edu" style="flex:1;min-width:220px">
+        <button onclick="addInvite()">Invite</button>
+      </div>
+      ${invites.map(i => `
+        <div class="item"><div class="row">
+          <div>
+            <div class="t">${esc(i.email)}</div>
+            <div class="d">${i.signedIn ? "has signed in" : "invited, not signed in yet"}</div>
+          </div>
+          <button class="danger" onclick="removeInvite('${esc(i.email)}')">Remove</button>
+        </div></div>`).join("")}
+    </section>`;
+}
+
+function signedOutView() {
+  if (state.setupNeeded) {
+    return `<div class="hero">
+      <h2>Almost there</h2>
+      <p>This deployment has a database but is still missing:</p>
+      <p><code>${esc(state.setupNeeded.join(", "))}</code></p>
+      <p>Run <code>python -m goodnotes_notion_sync keygen</code> for the secrets,
+         then add them in Vercel → Settings → Environment Variables.</p>
+    </div>`;
+  }
+  return `<div class="hero">
+    <h2 style="text-transform:none;font-size:18px;color:var(--ink);letter-spacing:normal">Sign in to sync your coursework</h2>
+    <p>Canvas assignments and GoodNotes PDFs, into your own Notion.<br>
+       Sign-in also grants read-only access to your Drive backup folder.</p>
+    <p style="margin-top:18px"><a class="button" href="/api/auth/google/start">Continue with Google</a></p>
+    <p style="font-size:12.5px">You must have been invited. Nothing is shared between accounts.</p>
+  </div>`;
+}
+
+function singleUserView() {
+  return `<div class="hero">
+    <h2 style="text-transform:none;font-size:18px;color:var(--ink);letter-spacing:normal">Single-user mode</h2>
+    <p>This deployment has no database, so it runs from environment variables.
+       ${state.missing?.length ? `Still missing: <code>${esc(state.missing.join(", "))}</code>` : "Configuration looks complete."}</p>
+    <div class="bar" style="justify-content:center;margin-top:18px">
+      <input id="legacyToken" type="password" placeholder="APP_TOKEN" style="max-width:280px">
+      <button onclick="useLegacyToken()">Unlock</button>
+    </div>
+    <p style="font-size:12.5px">Add a Postgres integration in Vercel to turn on accounts.</p>
+  </div>`;
+}
+
+// ------------------------------------------------------------------ render
+
+function render() {
+  if (!state || !state.ok) {
+    banner(esc(state?.error || "Could not load."), true);
+    $("sub").textContent = "";
     return;
   }
 
-  const t = data.totals;
-  $("cstats").innerHTML = [
-    ["Courses matched", `${t.matchedCourses}/${t.courses}`],
-    ["Assignments", t.assignments], ["New", t.created],
-    ["Due date moved", t.updated], ["Unchanged", t.unchanged],
-  ].map(([label, n]) => `<div class="stat"><b>${esc(n)}</b><span>${label}</span></div>`).join("");
+  if (state.mode === "single") {
+    $("who").innerHTML = "";
+    $("sub").textContent = "Environment-variable configuration";
+    $("root").innerHTML = legacyToken ? legacyResultShell() : singleUserView();
+    return;
+  }
 
-  const due = r => r.due ? esc(r.due.slice(0, 16).replace("T", " ")) : "no due date";
+  if (!state.signedIn) {
+    $("who").innerHTML = "";
+    $("sub").textContent = "";
+    $("root").innerHTML = signedOutView();
+    return;
+  }
+
+  const u = state.user;
+  $("who").innerHTML = `
+    <div class="who">
+      ${u.picture ? `<img src="${esc(u.picture)}" alt="">` : ""}
+      <span class="pill">${esc(u.email)}</span>
+      <a class="button ghost" href="/api/auth/logout">Sign out</a>
+    </div>`;
+  $("sub").textContent = u.isOwner ? "Owner" : "Member";
+
+  const tabs = [["status", "Status"], ["settings", "Settings"]];
+  if (u.isOwner) tabs.push(["invites", "People"]);
+
+  $("root").innerHTML = `
+    <div class="tabs">
+      ${tabs.map(([id, label]) =>
+        `<button aria-selected="${view === id}" onclick="show('${id}')">${label}</button>`).join("")}
+    </div>
+    ${view === "settings" ? settingsView() : view === "invites" ? invitesView() : statusView()}`;
+}
+
+function show(next) {
+  view = next;
+  banner("", false);
+  if (next === "settings" && !state.notionDatabases && state.connections.notion?.connected) {
+    load(true);
+    return;
+  }
+  render();
+}
+
+// ------------------------------------------------------------------ actions
+
+async function runJob(kind, dry) {
+  if (!dry && !confirm(kind === "canvas"
+      ? "Create and update Notion rows from Canvas?"
+      : "Write Drive links into Notion for every confident match?")) return;
+  banner(dry ? "Checking…" : "Running…", false);
+  const { data } = await api(`/api/${kind === "canvas" ? "canvas" : "sync"}?dry=${dry ? 1 : 0}`, { method: "POST" });
+  if (!data.ok || data.configured === false) {
+    banner(esc(data.error) + (data.missing ? `<br><code>${esc(data.missing.join(", "))}</code>` : "")
+      + (data.raw ? `<br><code>${esc(data.raw)}</code>` : ""), true);
+    return;
+  }
+  banner("", false);
+  $("result").innerHTML = resultBlock(kind, data);
+  if (!dry) load(false);
+}
+
+function resultBlock(kind, data) {
+  const t = data.totals || {};
+  const cells = kind === "canvas"
+    ? [["Courses", `${t.matchedCourses}/${t.courses}`], ["Assignments", t.assignments],
+       ["New", t.created], ["Due moved", t.updated], ["Unchanged", t.unchanged]]
+    : [["Assignments", t.assignments], ["PDFs", t.files], ["Linked", t.linked],
+       ["No match", t.unmatched], ["Orphans", t.orphanFiles]];
+
+  const lists = kind === "canvas"
+    ? [["New", data.created], ["Due date changed", data.updated],
+       ["Matched an existing row", data.adopted]]
+    : [["Linked", data.linked], ["No match", data.unmatched]];
+
   const line = r => `
     <div class="item">
+      ${r.score !== undefined ? `<span class="score">${r.score.toFixed(2)}</span>` : ""}
       <div class="t">${esc(r.title)}</div>
-      <div class="d">${due(r)}${r.detail ? " · " + esc(r.detail) : ""}</div>
+      <div class="d">${esc(r.due ? r.due.slice(0, 16).replace("T", " ")
+        : (r.file ? (r.path ? r.path + "/" + r.file : r.file) : r.reason || r.detail || ""))}</div>
     </div>`;
 
-  items($("ccreated"), data.created, line);
-  items($("cupdated"), data.updated, line);
-  items($("cadopted"), data.adopted, line);
-  items($("ccourses"), data.unmatchedCourses, c => `
-    <div class="item">
-      <div class="t">${esc(c.name)}</div>
-      <div class="d">${esc(c.reason)}. Set that Code on the course row in Notion.</div>
-    </div>`);
+  const unmatched = (data.unmatchedCourses || []).map(c => `
+    <div class="item"><div class="t">${esc(c.name)}</div>
+      <div class="d">${esc(c.reason)}. Set that Code on the course row in Notion.</div></div>`).join("");
 
-  $("sub").textContent =
-    `Canvas · ${data.dryRun ? "dry run" : "imported"} · ${data.generatedAt} · ${data.elapsedSeconds}s`;
+  return `
+    <div class="stats" style="margin-top:16px">
+      ${cells.map(([label, n]) => `<div class="stat"><b>${esc(n)}</b><span>${label}</span></div>`).join("")}
+    </div>
+    ${lists.filter(([, rows]) => rows && rows.length).map(([label, rows]) =>
+      `<section><h2>${label}</h2>${rows.map(line).join("")}</section>`).join("")}
+    ${unmatched ? `<section><h2>Canvas courses with no Notion match</h2>${unmatched}</section>` : ""}
+    ${(data.orphanFiles || []).length ? `<section><h2>PDFs with no assignment</h2>${
+      data.orphanFiles.map(f => `<div class="item"><div class="t">${esc(f.path ? f.path + "/" + f.name : f.name)}</div>
+        <div class="d">Rename the notebook to match an assignment title to link it.</div></div>`).join("")}</section>` : ""}`;
 }
 
-async function callCanvas({ dry }) {
-  const buttons = [$("cimport"), $("ccheck")];
-  buttons.forEach(b => b.disabled = true);
-  banner(dry ? "Checking Canvas…" : "Importing from Canvas…", false);
-  try {
-    const res = await fetch(`/api/canvas?dry=${dry ? 1 : 0}`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    const text = await res.text();
-    let data;
-    try {
-      data = JSON.parse(text);
-    } catch {
-      data = {
-        ok: false,
-        error: `HTTP ${res.status} — the function crashed before replying. `
-             + `The traceback is in Vercel → your project → Logs.`,
-        raw: text.slice(0, 400),
-      };
-    }
-    if (res.status === 401) { lock("That token was rejected."); return; }
-    if (!data.ok) {
-      const extra = data.raw ? `<br><code>${esc(data.raw)}</code>` : "";
-      banner(`${esc(data.error)}${extra}`, true);
-      return;
-    }
-    if (data.configured !== false) banner("", false);
-    paintCanvas(data);
-  } catch (err) {
-    banner(esc(String(err)), true);
-  } finally {
-    buttons.forEach(b => b.disabled = false);
-  }
+async function saveSettings() {
+  const body = {
+    assignmentsDb: $("assignmentsDb").value.trim(),
+    coursesDb: $("coursesDb").value.trim(),
+    driveFolderId: $("driveFolderId").value.trim(),
+    canvasBaseUrl: $("canvasBaseUrl").value.trim(),
+    campusTimezone: $("campusTimezone").value.trim(),
+    autoSync: $("autoSync").checked,
+  };
+  const token = $("canvasToken").value.trim();
+  if (token) body.canvasToken = token;
+
+  const { data } = await api("/api/settings", { method: "POST", body });
+  if (!data.ok) { banner(esc(data.error), true); return; }
+  banner("Saved.", false);
+  view = "status";
+  load(false);
 }
 
-function lock(message) {
-  try { sessionStorage.removeItem(KEY); } catch (e) {}
-  token = "";
-  $("app").hidden = true; $("gate").hidden = false;
-  $("sub").textContent = message;
+async function disconnect(provider) {
+  if (!confirm(`Remove the stored ${provider} credential?`)) return;
+  const { data } = await api("/api/settings", { method: "POST", body: { disconnect: provider } });
+  if (!data.ok) { banner(esc(data.error), true); return; }
+  load(false);
 }
 
-function showTab(which) {
-  const canvas = which === "canvas";
-  $("panel-canvas").hidden = !canvas;
-  $("panel-notes").hidden = canvas;
-  $("tab-canvas").setAttribute("aria-selected", String(canvas));
-  $("tab-notes").setAttribute("aria-selected", String(!canvas));
-  banner("", false);
-  if (canvas && !$("cstats").innerHTML) callCanvas({ dry: true });
+async function addInvite() {
+  const email = $("inviteEmail").value.trim();
+  if (!email) return;
+  const { data } = await api("/api/invites", { method: "POST", body: { action: "add", email } });
+  if (!data.ok) { banner(esc(data.error), true); return; }
+  state.invites = data.invites;
+  render();
 }
 
-function unlock() {
-  token = $("token").value.trim();
-  if (!token) return;
-  try { sessionStorage.setItem(KEY, token); } catch (e) {}
-  $("gate").hidden = true; $("app").hidden = false;
-  call({ dry: true, method: "POST" });
+async function removeInvite(email) {
+  if (!confirm(`Remove ${email}? They keep their data but cannot sign in again.`)) return;
+  const { data } = await api("/api/invites", { method: "POST", body: { action: "remove", email } });
+  if (!data.ok) { banner(esc(data.error), true); return; }
+  state.invites = data.invites;
+  render();
 }
 
-$("unlock").onclick = unlock;
-$("token").addEventListener("keydown", e => { if (e.key === "Enter") unlock(); });
-$("refresh").onclick = () => call({ dry: true, method: "POST" });
-$("sync").onclick = () => {
-  if (confirm("Write links into Notion for every confident match?")) {
-    call({ dry: false, method: "POST" });
-  }
-};
-$("forget").onclick = () => {
-  $("token").value = "";
-  lock("Token forgotten.");
-};
+// ------------------------------------------- single-user (no database) mode
 
-$("tab-notes").onclick = () => showTab("notes");
-$("tab-canvas").onclick = () => showTab("canvas");
-$("ccheck").onclick = () => callCanvas({ dry: true });
-$("cimport").onclick = () => {
-  if (confirm("Create and update Notion rows from Canvas?")) {
-    callCanvas({ dry: false });
-  }
-};
+function legacyResultShell() {
+  return `
+    <div class="bar">
+      <button onclick="runJob('canvas', false)">Import from Canvas</button>
+      <button onclick="runJob('sync', false)">Link GoodNotes PDFs</button>
+      <button class="ghost" onclick="runJob('sync', true)">Dry run</button>
+      <button class="ghost" onclick="forgetToken()">Forget token</button>
+    </div>
+    <div id="result"></div>`;
+}
 
-if (token) { $("gate").hidden = true; $("app").hidden = false; call({ dry: true, method: "POST" }); }
+function useLegacyToken() {
+  legacyToken = $("legacyToken").value.trim();
+  if (!legacyToken) return;
+  try { sessionStorage.setItem("gn-notion-token", legacyToken); } catch (e) {}
+  render();
+}
+
+function forgetToken() {
+  legacyToken = "";
+  try { sessionStorage.removeItem("gn-notion-token"); } catch (e) {}
+  render();
+}
+
+// ------------------------------------------------------------------- start
+
+const notice = new URLSearchParams(location.search).get("notice");
+if (notice) {
+  banner(esc(notice), /fail|expired|not been invited|cancel/i.test(notice));
+  history.replaceState({}, "", location.pathname);
+}
+load(false);
 </script>
 </body>
 </html>

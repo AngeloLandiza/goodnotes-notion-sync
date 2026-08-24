@@ -7,7 +7,6 @@ assignment titles and Drive filenames, and trigger writes into your Notion.
 
 from __future__ import annotations
 
-import hmac
 import os
 import sys
 import time
@@ -24,6 +23,8 @@ from goodnotes_notion_sync.canvas_import import (  # noqa: E402
 from goodnotes_notion_sync.drive import DriveClient  # noqa: E402
 from goodnotes_notion_sync.notion import NotionClient  # noqa: E402
 from goodnotes_notion_sync.sync import Report, run_sync  # noqa: E402
+
+from _app import authorised, config_from_env  # noqa: E402,F401
 
 REQUIRED = (
     "NOTION_TOKEN",
@@ -67,35 +68,8 @@ def canvas_configured() -> bool:
     return not canvas_missing_env()
 
 
-def authorised(headers) -> bool:
-    """True when the caller presents the dashboard token or Vercel's cron secret.
-
-    Vercel sends `Authorization: Bearer $CRON_SECRET` on scheduled invocations.
-    The dashboard sends `APP_TOKEN` the same way. Compared with
-    `hmac.compare_digest` so the check is not timing-sensitive.
-    """
-    header = headers.get("Authorization") or headers.get("authorization") or ""
-    provided = header[7:].strip() if header.lower().startswith("bearer ") else ""
-    if not provided:
-        return False
-
-    accepted = {
-        os.environ.get("APP_TOKEN", "").strip(),
-        os.environ.get("CRON_SECRET", "").strip(),
-    }
-    accepted.discard("")
-    if not accepted:
-        # Fail closed. An unset token must never mean "open to everyone".
-        return False
-
-    # compare_digest raises TypeError on a non-ASCII str, and this runs
-    # *outside* the handler's try block -- so a request with an accented
-    # character in the token would crash the function instead of getting a 401.
-    supplied = provided.encode("utf-8")
-    return any(
-        hmac.compare_digest(supplied, value.encode("utf-8")) for value in accepted
-    )
-
+# `authorised` lives in _app so that _app can gate requests without
+# importing this module back. Re-exported here for existing callers.
 
 def serialise(report: Report, *, dry_run: bool, elapsed: float) -> dict:
     def row(entry):
@@ -132,25 +106,6 @@ def serialise(report: Report, *, dry_run: bool, elapsed: float) -> dict:
             for c in report.orphan_files
         ],
     }
-
-
-def execute(*, dry_run: bool, force: bool = False) -> dict:
-    started = time.monotonic()
-    notion = NotionClient(env("NOTION_TOKEN"))
-    drive = DriveClient(
-        env("GOOGLE_CLIENT_ID"),
-        env("GOOGLE_CLIENT_SECRET"),
-        env("GOOGLE_REFRESH_TOKEN"),
-    )
-    report = run_sync(
-        notion=notion,
-        drive=drive,
-        database_id=env("NOTION_ASSIGNMENTS_DB"),
-        folder_id=drive.resolve_folder(env("GDRIVE_FOLDER_ID")),
-        dry_run=dry_run,
-        force=force,
-    )
-    return serialise(report, dry_run=dry_run, elapsed=time.monotonic() - started)
 
 
 def serialise_canvas(report: ImportReport, *, dry_run: bool, elapsed: float) -> dict:
@@ -190,24 +145,56 @@ def serialise_canvas(report: ImportReport, *, dry_run: bool, elapsed: float) -> 
             for link in report.unmatched_courses
         ],
         "knownCodes": report.known_codes,
+        "errors": [
+            {"course": course.name or course.course_code, "message": message}
+            for course, message in report.errors
+        ],
     }
 
 
-def execute_canvas(*, dry_run: bool) -> dict:
+def execute(*, dry_run: bool, force: bool = False, config=None) -> dict:
+    """Run the GoodNotes sync for one configuration.
+
+    `config` is a RunConfig -- one user's stored credentials in accounts mode,
+    or the process environment in single-user mode. Passing it in rather than
+    reading os.environ here is what makes the same code path serve both.
+    """
+    cfg = config or config_from_env()
+    absent = cfg.missing_for_sync()
+    if absent:
+        raise ConfigError("Missing configuration: " + ", ".join(absent))
+
     started = time.monotonic()
-    notion = NotionClient(env("NOTION_TOKEN"))
-    canvas = CanvasClient(
-        env("CANVAS_TOKEN"),
-        os.environ.get("CANVAS_BASE_URL", "").strip() or DEFAULT_BASE_URL,
+    notion = NotionClient(cfg.notion_token)
+    drive = DriveClient(
+        cfg.google_client_id, cfg.google_client_secret, cfg.google_refresh_token
     )
+    report = run_sync(
+        notion=notion,
+        drive=drive,
+        database_id=cfg.assignments_db,
+        folder_id=drive.resolve_folder(cfg.drive_folder_id),
+        dry_run=dry_run,
+        force=force,
+    )
+    return serialise(report, dry_run=dry_run, elapsed=time.monotonic() - started)
+
+
+def execute_canvas(*, dry_run: bool, config=None) -> dict:
+    cfg = config or config_from_env()
+    absent = cfg.missing_for_canvas()
+    if absent:
+        raise ConfigError("Missing configuration: " + ", ".join(absent))
+
+    started = time.monotonic()
+    notion = NotionClient(cfg.notion_token)
+    canvas = CanvasClient(cfg.canvas_token, cfg.canvas_base_url or DEFAULT_BASE_URL)
     report = run_canvas_import(
         canvas=canvas,
         notion=notion,
-        assignments_db=env("NOTION_ASSIGNMENTS_DB"),
-        courses_db=env("NOTION_COURSES_DB"),
-        tz_name=os.environ.get("CAMPUS_TIMEZONE", "").strip() or DEFAULT_TIMEZONE,
+        assignments_db=cfg.assignments_db,
+        courses_db=cfg.courses_db,
+        tz_name=cfg.campus_timezone or DEFAULT_TIMEZONE,
         dry_run=dry_run,
     )
-    return serialise_canvas(
-        report, dry_run=dry_run, elapsed=time.monotonic() - started
-    )
+    return serialise_canvas(report, dry_run=dry_run, elapsed=time.monotonic() - started)
