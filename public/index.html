@@ -144,7 +144,22 @@ async function call({ dry, method }) {
       method,
       headers: { Authorization: `Bearer ${token}` },
     });
-    const data = await res.json().catch(() => ({ ok: false, error: `HTTP ${res.status}` }));
+
+    // A non-JSON body means the function raised before it could reply --
+    // almost always a cold-start ImportError. Say so, and keep the first
+    // chunk of the response, instead of showing a bare status code.
+    const text = await res.text();
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch {
+      data = {
+        ok: false,
+        error: `HTTP ${res.status} — the function crashed before replying. `
+             + `The traceback is in Vercel → your project → Logs.`,
+        raw: text.slice(0, 400),
+      };
+    }
 
     if (res.status === 401) {
       try { sessionStorage.removeItem(KEY); } catch (e) {}
@@ -153,7 +168,9 @@ async function call({ dry, method }) {
       return;
     }
     if (!data.ok) {
-      const extra = data.missing ? `<br><code>${esc(data.missing.join(", "))}</code>` : "";
+      let extra = "";
+      if (data.missing) extra = `<br><code>${esc(data.missing.join(", "))}</code>`;
+      else if (data.raw) extra = `<br><code>${esc(data.raw)}</code>`;
       banner(`${esc(data.error)}${extra}`, true);
       return;
     }
