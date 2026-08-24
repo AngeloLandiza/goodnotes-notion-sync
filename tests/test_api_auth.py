@@ -82,3 +82,19 @@ def test_missing_env_is_empty_when_fully_configured(monkeypatch):
     for name in _shared.REQUIRED:
         monkeypatch.setenv(name, "x")
     assert _shared.missing_env() == []
+
+
+def test_a_non_ascii_token_is_rejected_not_a_crash(monkeypatch):
+    """`hmac.compare_digest` raises TypeError on a non-ASCII str.
+
+    The auth check runs *outside* the handler's try block, so this reached the
+    platform as FUNCTION_INVOCATION_FAILED with no JSON body -- a crash any
+    passer-by could trigger with one curl.
+    """
+    monkeypatch.setenv("APP_TOKEN", "correct-token")
+    assert _shared.authorised(Headers({"Authorization": "Bearer pässwort"})) is False
+
+
+def test_a_non_ascii_token_can_also_be_the_right_one(monkeypatch):
+    monkeypatch.setenv("APP_TOKEN", "pässwort")
+    assert _shared.authorised(Headers({"Authorization": "Bearer pässwort"})) is True

@@ -6,3 +6,6 @@ __pycache__/
 venv/
 *.egg-info/
 .DS_Store
+
+# scratch from an assistant transfer; safe to remove
+_to_delete/

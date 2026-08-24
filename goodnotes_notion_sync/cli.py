@@ -9,6 +9,8 @@ import pathlib
 import sys
 
 
+from .canvas import DEFAULT_BASE_URL, CanvasClient, CanvasError
+from .canvas_import import DEFAULT_TIMEZONE, PropertyNames, run_canvas_import
 from .drive import SCOPES, DriveClient, DriveError
 from .notion import NotionClient, NotionError
 from .oauth import OAuthError, run_local_flow
@@ -80,12 +82,51 @@ def cmd_sync(args: argparse.Namespace) -> int:
     text = report.to_text(dry_run=args.dry_run)
     print(text)
 
-    summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
-    if summary_path:
-        with open(summary_path, "a", encoding="utf-8") as handle:
-            handle.write("## GoodNotes sync\n\n```\n" + text + "\n```\n")
-
+    _write_summary("GoodNotes sync", text)
     return 0
+
+
+def _write_summary(heading: str, text: str) -> None:
+    """Mirror the report into the GitHub Actions job summary, when in one."""
+    summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+    if not summary_path:
+        return
+    with open(summary_path, "a", encoding="utf-8") as handle:
+        handle.write(f"## {heading}\n\n```\n{text}\n```\n")
+
+
+def cmd_canvas_import(args: argparse.Namespace) -> int:
+    notion = NotionClient(_require("NOTION_TOKEN"))
+    canvas = CanvasClient(
+        _require("CANVAS_TOKEN"),
+        args.canvas_url or os.environ.get("CANVAS_BASE_URL") or DEFAULT_BASE_URL,
+    )
+
+    report = run_canvas_import(
+        canvas=canvas,
+        notion=notion,
+        assignments_db=args.database or _require("NOTION_ASSIGNMENTS_DB"),
+        courses_db=args.courses_database or _require("NOTION_COURSES_DB"),
+        tz_name=args.timezone,
+        dry_run=args.dry_run,
+        include_undated=not args.skip_undated,
+        allow_unmatched_courses=args.allow_unmatched_courses,
+        enrollment_state=args.enrollment_state,
+        names=PropertyNames(
+            title=args.title_property,
+            type=args.type_property,
+            status=args.status_property,
+            new_status=args.new_status,
+        ),
+    )
+
+    text = report.to_text()
+    print(text)
+    _write_summary("Canvas import", text)
+
+    # An unmatched course is a silent data loss unless it is made loud: those
+    # assignments are simply not imported.
+    return 3 if report.unmatched_courses and not args.allow_unmatched_courses else 0
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -150,10 +191,75 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sync.set_defaults(func=cmd_sync)
 
+    canvas = sub.add_parser(
+        "canvas-import",
+        parents=[common],
+        help="pull assignments and due dates from Canvas into Notion",
+        description=(
+            "Create a Notion assignment row for every Canvas assignment, and "
+            "keep due dates in step on later runs. Titles are written once, "
+            "on creation, and never rewritten."
+        ),
+    )
+    canvas.add_argument("--database", help="Notion assignments database id")
+    canvas.add_argument("--courses-database", help="Notion courses database id")
+    canvas.add_argument(
+        "--canvas-url",
+        help=f"your school's Canvas host (default: $CANVAS_BASE_URL or {DEFAULT_BASE_URL})",
+    )
+    canvas.add_argument(
+        "--timezone",
+        default=DEFAULT_TIMEZONE,
+        help=f"campus timezone for due dates (default: {DEFAULT_TIMEZONE})",
+    )
+    canvas.add_argument(
+        "--enrollment-state",
+        default="active",
+        choices=("active", "completed", "invited_or_pending"),
+        help="which enrolments to read (default: active, i.e. this term)",
+    )
+    canvas.add_argument(
+        "--skip-undated",
+        action="store_true",
+        help="ignore Canvas assignments with no due date",
+    )
+    canvas.add_argument(
+        "--allow-unmatched-courses",
+        action="store_true",
+        help=(
+            "import assignments from Canvas courses with no matching Notion "
+            "course row (they land with no Course relation)"
+        ),
+    )
+    canvas.add_argument(
+        "--title-property",
+        default="Title",
+        help='Notion title property (default: "Title"; Notion\'s own default is "Name")',
+    )
+    canvas.add_argument(
+        "--type-property",
+        default="Type",
+        help='select property for the inferred kind; "" to not write it',
+    )
+    canvas.add_argument(
+        "--status-property",
+        default="Status",
+        help='status property set on new rows; "" to not write it',
+    )
+    canvas.add_argument(
+        "--new-status",
+        default="Not started",
+        help='status given to newly created rows (default: "Not started")',
+    )
+    canvas.add_argument(
+        "-n", "--dry-run", action="store_true", help="report without writing to Notion"
+    )
+    canvas.set_defaults(func=cmd_canvas_import)
+
     return parser
 
 
-SUBCOMMANDS = ("auth", "sync")
+SUBCOMMANDS = ("auth", "sync", "canvas-import")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -182,7 +288,7 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         return args.func(args)
-    except (DriveError, NotionError, OAuthError) as exc:
+    except (CanvasError, DriveError, NotionError, OAuthError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
 

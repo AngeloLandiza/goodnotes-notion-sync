@@ -21,6 +21,7 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "api"))
 sys.path.insert(0, str(ROOT))
 
+import canvas as canvas_module  # noqa: E402  (api/canvas.py)
 import sync as sync_module  # noqa: E402  (api/sync.py)
 
 
@@ -52,9 +53,26 @@ def request(url, *, token=None, method="POST"):
             )
 
 
+@pytest.fixture
+def canvas_server():
+    httpd = HTTPServer(("127.0.0.1", 0), canvas_module.handler)
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    yield f"http://127.0.0.1:{httpd.server_address[1]}"
+    httpd.shutdown()
+    httpd.server_close()
+
+
 @pytest.fixture(autouse=True)
 def clean_env(monkeypatch):
-    for name in ("APP_TOKEN", "CRON_SECRET"):
+    for name in (
+        "APP_TOKEN",
+        "CRON_SECRET",
+        "CANVAS_TOKEN",
+        "NOTION_COURSES_DB",
+        "NOTION_TOKEN",
+        "NOTION_ASSIGNMENTS_DB",
+    ):
         monkeypatch.delenv(name, raising=False)
 
 
@@ -130,3 +148,50 @@ def test_import_failure_still_answers_with_json(server, monkeypatch):
     assert status == 500
     assert body["ok"] is False
     assert body["raw"] == "ImportError: boom"
+
+
+# -- the Canvas endpoint ---------------------------------------------------
+
+
+def test_canvas_endpoint_is_gated_too(canvas_server):
+    status, body = request(f"{canvas_server}/api/canvas", method="POST")
+    assert status == 401
+    assert body == {"ok": False, "error": "Unauthorised"}
+
+
+def test_canvas_without_configuration_is_not_an_error(canvas_server, monkeypatch):
+    """A deployment that only wants the GoodNotes sync must not see a 500.
+
+    Canvas is the optional half of this project. Reporting its absence as a
+    failure would make an unrelated, working deployment look broken.
+    """
+    monkeypatch.setenv("APP_TOKEN", "tok")
+    status, body = request(f"{canvas_server}/api/canvas?dry=1", token="tok")
+
+    assert status == 200
+    assert body["ok"] is True
+    assert body["configured"] is False
+    assert "CANVAS_TOKEN" in body["missing"]
+    assert "NOTION_COURSES_DB" in body["missing"]
+
+
+def test_canvas_handler_imports_with_nothing_on_sys_path():
+    """Load api/canvas.py the way Vercel does: by file, from elsewhere."""
+    script = (
+        "import importlib.util;"
+        "spec = importlib.util.spec_from_file_location('canvas_fn', %r);"
+        "m = importlib.util.module_from_spec(spec);"
+        "spec.loader.exec_module(m);"
+        "assert m._IMPORT_ERROR is None, m._IMPORT_ERROR;"
+        "print(m.handler.__name__)" % str(ROOT / "api" / "canvas.py")
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+        cwd=str(ROOT.parent),  # deliberately not the repo root
+    )
+    assert result.returncode == 0, (
+        f"api/canvas.py cannot load the way Vercel loads it:\n{result.stderr}"
+    )
+    assert "handler" in result.stdout

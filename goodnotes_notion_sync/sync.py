@@ -106,6 +106,11 @@ def run_sync(
     # beaten to its PDF by a weaker one that happened to be processed earlier.
     ranked: list[tuple[float, Assignment, Candidate | None, str]] = []
     for assignment in assignments:
+        if not assignment.title.strip():
+            # Only reachable for a row the Canvas import created and someone
+            # then emptied. Nothing can be matched on an empty title, and
+            # listing it as "no match" is noise, not information.
+            continue
         if assignment.has_notes and not force:
             report.rows.append(
                 Row(assignment, None, 0.0, "already has a link", "already-linked")

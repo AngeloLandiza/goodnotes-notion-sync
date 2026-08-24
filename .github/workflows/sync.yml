@@ -1,4 +1,4 @@
-name: Sync GoodNotes PDFs to Notion
+name: Sync Canvas and GoodNotes into Notion
 
 on:
   schedule:
@@ -31,6 +31,26 @@ jobs:
           cache: pip
 
       - run: pip install -r requirements.txt
+
+      # Canvas first: rows it creates are then available to the GoodNotes
+      # matcher in the same run, so a new assignment and its notebook can link
+      # up without waiting six hours for the next pass.
+      #
+      # continue-on-error because the import exits 3 when a Canvas course has
+      # no matching Notion course row. That is a real thing to fix, but it must
+      # not stop the PDF sync from running.
+      - name: Import from Canvas
+        continue-on-error: true
+        env:
+          CANVAS_TOKEN: ${{ secrets.CANVAS_TOKEN }}
+          CANVAS_BASE_URL: ${{ secrets.CANVAS_BASE_URL }}
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          NOTION_ASSIGNMENTS_DB: ${{ secrets.NOTION_ASSIGNMENTS_DB }}
+          NOTION_COURSES_DB: ${{ secrets.NOTION_COURSES_DB }}
+        if: env.CANVAS_TOKEN != ''
+        run: |
+          python -m goodnotes_notion_sync canvas-import \
+            ${{ inputs.dry_run && '--dry-run' || '' }}
 
       - name: Sync
         env:

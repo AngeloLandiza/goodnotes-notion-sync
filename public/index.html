@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
-<title>GoodNotes → Notion</title>
+<title>Academic OS sync</title>
 <style>
   :root {
     color-scheme: light dark;
@@ -54,11 +54,18 @@
   .banner.err { border-color: color-mix(in srgb, var(--warn) 45%, var(--line)); }
   input[type=password] { font: inherit; padding: 9px 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); flex: 1; min-width: 220px; }
   code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; }
+  .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin-bottom: 20px; }
+  .tabs button {
+    background: transparent; color: var(--muted); border-radius: 8px 8px 0 0;
+    border-bottom: 2px solid transparent; padding: 8px 14px; font-weight: 550;
+  }
+  .tabs button[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--accent); }
+  .note { color: var(--muted); font-size: 13px; margin: 0 0 18px; }
 </style>
 </head>
 <body>
 <main>
-  <h1>GoodNotes → Notion</h1>
+  <h1>Academic OS sync</h1>
   <p class="sub" id="sub">Enter your dashboard token to load the current state.</p>
 
   <div id="gate" class="bar">
@@ -67,16 +74,41 @@
   </div>
 
   <div id="app" hidden>
-    <div class="bar">
-      <button id="sync">Sync now</button>
-      <button id="refresh" class="ghost">Refresh (dry run)</button>
-      <button id="forget" class="ghost">Forget token</button>
+    <div class="tabs" role="tablist">
+      <button id="tab-notes" role="tab" aria-selected="true">GoodNotes → Notion</button>
+      <button id="tab-canvas" role="tab" aria-selected="false">Canvas → Notion</button>
     </div>
+
     <div id="banner" class="banner" hidden></div>
-    <div class="stats" id="stats"></div>
-    <section><h2>Linked</h2><div id="linked"></div></section>
-    <section><h2>No match</h2><div id="unmatched"></div></section>
-    <section><h2>PDFs with no assignment</h2><div id="orphans"></div></section>
+
+    <div id="panel-notes">
+      <div class="bar">
+        <button id="sync">Link PDFs now</button>
+        <button id="refresh" class="ghost">Refresh (dry run)</button>
+        <button id="forget" class="ghost">Forget token</button>
+      </div>
+      <div class="stats" id="stats"></div>
+      <section><h2>Linked</h2><div id="linked"></div></section>
+      <section><h2>No match</h2><div id="unmatched"></div></section>
+      <section><h2>PDFs with no assignment</h2><div id="orphans"></div></section>
+    </div>
+
+    <div id="panel-canvas" hidden>
+      <div class="bar">
+        <button id="cimport">Import now</button>
+        <button id="ccheck" class="ghost">Check (dry run)</button>
+      </div>
+      <p class="note">
+        Creates a Notion row per Canvas assignment and keeps due dates in step.
+        Titles are written once, on creation, and never rewritten — so renaming
+        a row to match a GoodNotes notebook sticks.
+      </p>
+      <div class="stats" id="cstats"></div>
+      <section><h2>New</h2><div id="ccreated"></div></section>
+      <section><h2>Due date changed</h2><div id="cupdated"></div></section>
+      <section><h2>Matched an existing row</h2><div id="cadopted"></div></section>
+      <section><h2>Canvas courses with no Notion match</h2><div id="ccourses"></div></section>
+    </div>
   </div>
 </main>
 
@@ -161,12 +193,7 @@ async function call({ dry, method }) {
       };
     }
 
-    if (res.status === 401) {
-      try { sessionStorage.removeItem(KEY); } catch (e) {}
-      $("app").hidden = true; $("gate").hidden = false;
-      $("sub").textContent = "That token was rejected.";
-      return;
-    }
+    if (res.status === 401) { lock("That token was rejected."); return; }
     if (!data.ok) {
       let extra = "";
       if (data.missing) extra = `<br><code>${esc(data.missing.join(", "))}</code>`;
@@ -181,6 +208,96 @@ async function call({ dry, method }) {
   } finally {
     buttons.forEach(b => b.disabled = false);
   }
+}
+
+function paintCanvas(data) {
+  if (data.configured === false) {
+    $("cstats").innerHTML = "";
+    ["ccreated", "cupdated", "cadopted", "ccourses"].forEach(id => { $(id).innerHTML = ""; });
+    banner(
+      "Canvas is not configured for this deployment.<br><code>"
+      + esc((data.missing || []).join(", ")) + "</code>", true);
+    return;
+  }
+
+  const t = data.totals;
+  $("cstats").innerHTML = [
+    ["Courses matched", `${t.matchedCourses}/${t.courses}`],
+    ["Assignments", t.assignments], ["New", t.created],
+    ["Due date moved", t.updated], ["Unchanged", t.unchanged],
+  ].map(([label, n]) => `<div class="stat"><b>${esc(n)}</b><span>${label}</span></div>`).join("");
+
+  const due = r => r.due ? esc(r.due.slice(0, 16).replace("T", " ")) : "no due date";
+  const line = r => `
+    <div class="item">
+      <div class="t">${esc(r.title)}</div>
+      <div class="d">${due(r)}${r.detail ? " · " + esc(r.detail) : ""}</div>
+    </div>`;
+
+  items($("ccreated"), data.created, line);
+  items($("cupdated"), data.updated, line);
+  items($("cadopted"), data.adopted, line);
+  items($("ccourses"), data.unmatchedCourses, c => `
+    <div class="item">
+      <div class="t">${esc(c.name)}</div>
+      <div class="d">${esc(c.reason)}. Set that Code on the course row in Notion.</div>
+    </div>`);
+
+  $("sub").textContent =
+    `Canvas · ${data.dryRun ? "dry run" : "imported"} · ${data.generatedAt} · ${data.elapsedSeconds}s`;
+}
+
+async function callCanvas({ dry }) {
+  const buttons = [$("cimport"), $("ccheck")];
+  buttons.forEach(b => b.disabled = true);
+  banner(dry ? "Checking Canvas…" : "Importing from Canvas…", false);
+  try {
+    const res = await fetch(`/api/canvas?dry=${dry ? 1 : 0}`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const text = await res.text();
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch {
+      data = {
+        ok: false,
+        error: `HTTP ${res.status} — the function crashed before replying. `
+             + `The traceback is in Vercel → your project → Logs.`,
+        raw: text.slice(0, 400),
+      };
+    }
+    if (res.status === 401) { lock("That token was rejected."); return; }
+    if (!data.ok) {
+      const extra = data.raw ? `<br><code>${esc(data.raw)}</code>` : "";
+      banner(`${esc(data.error)}${extra}`, true);
+      return;
+    }
+    if (data.configured !== false) banner("", false);
+    paintCanvas(data);
+  } catch (err) {
+    banner(esc(String(err)), true);
+  } finally {
+    buttons.forEach(b => b.disabled = false);
+  }
+}
+
+function lock(message) {
+  try { sessionStorage.removeItem(KEY); } catch (e) {}
+  token = "";
+  $("app").hidden = true; $("gate").hidden = false;
+  $("sub").textContent = message;
+}
+
+function showTab(which) {
+  const canvas = which === "canvas";
+  $("panel-canvas").hidden = !canvas;
+  $("panel-notes").hidden = canvas;
+  $("tab-canvas").setAttribute("aria-selected", String(canvas));
+  $("tab-notes").setAttribute("aria-selected", String(!canvas));
+  banner("", false);
+  if (canvas && !$("cstats").innerHTML) callCanvas({ dry: true });
 }
 
 function unlock() {
@@ -200,9 +317,17 @@ $("sync").onclick = () => {
   }
 };
 $("forget").onclick = () => {
-  try { sessionStorage.removeItem(KEY); } catch (e) {}
-  token = ""; $("app").hidden = true; $("gate").hidden = false;
-  $("token").value = ""; $("sub").textContent = "Token forgotten.";
+  $("token").value = "";
+  lock("Token forgotten.");
+};
+
+$("tab-notes").onclick = () => showTab("notes");
+$("tab-canvas").onclick = () => showTab("canvas");
+$("ccheck").onclick = () => callCanvas({ dry: true });
+$("cimport").onclick = () => {
+  if (confirm("Create and update Notion rows from Canvas?")) {
+    callCanvas({ dry: false });
+  }
 };
 
 if (token) { $("gate").hidden = true; $("app").hidden = false; call({ dry: true, method: "POST" }); }

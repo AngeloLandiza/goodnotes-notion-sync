@@ -1,18 +1,26 @@
 # goodnotes-notion-sync
 
-Links each assignment row in a Notion database to the GoodNotes PDF of the same
-name in a Google Drive backup folder, by writing the Drive URL into a URL
-property. GoodNotes has no API; the hook is its Auto-Backup to Drive.
+Two one-way imports into one Notion assignments database:
+
+- **Canvas → Notion** (`canvas-import`): a row per Canvas assignment, with due
+  dates kept current. Joined to the Courses database on the course code.
+- **GoodNotes → Notion** (`sync`): the Drive URL of the PDF whose name matches
+  the assignment title, written into a URL property. GoodNotes has no API; the
+  hook is its Auto-Backup to Drive.
+
+Neither writes back to its source. Nothing is ever deleted.
 
 ## Commands
 
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements-dev.txt
-pytest                                     # 61 tests, offline, ~0.2s
+pytest                                     # 152 tests, offline, ~4s
 python -m goodnotes_notion_sync --dry-run  # report without writing
 python -m goodnotes_notion_sync            # write links
 python -m goodnotes_notion_sync auth       # mint a Google refresh token
+python -m goodnotes_notion_sync canvas-import --dry-run
+python -m goodnotes_notion_sync canvas-import
 ```
 
 Always work inside the venv. This machine is macOS with Homebrew Python, so a
@@ -28,8 +36,10 @@ matching logic is the part that actually gets tested.
 | File | Role |
 |---|---|
 | `matching.py` | normalise + score filenames against titles. The only interesting logic. Pure, no I/O. |
+| `canvas.py` | read-only Canvas REST: courses, assignments, Link-header pagination |
+| `canvas_import.py` | Canvas -> Notion mapping and the create/update/adopt decision |
 | `drive.py` | read-only recursive Drive walk, returns `Candidate`s |
-| `notion.py` | two REST calls: query a database, PATCH a URL property |
+| `notion.py` | query a database, create a page, PATCH properties |
 | `sync.py` | pairs them up, produces a `Report` |
 | `cli.py` | argparse, dotenv, subcommands |
 | `oauth.py` | one-time loopback OAuth to mint a refresh token |
@@ -63,6 +73,66 @@ assignment order in Notion never decides who wins a contested PDF.
 
 **No rapidfuzz.** stdlib `difflib` keeps the runtime dependency list at
 `requests` alone.
+
+**The Canvas import never rewrites a Title after creation.** Renaming a row to
+match a GoodNotes notebook is how the PDF gets linked. An import that restored
+Canvas' wording every six hours would undo that silently, and the sync report
+would blame the notebook. Only `Due Date` and `Canvas URL` are updated.
+
+**Underscores are stripped before `course_code()` reads a Canvas course.** UIC
+sends `2026_Fall_CS_411_39421`, and `_` is a word character, so `\b` never
+fires in front of `CS`. Without the strip every course parses as codeless and
+the entire import lands in the unmatched pile.
+
+**A Canvas course with no Notion match is skipped, not imported.** An
+assignment row with no `Course` relation is invisible in every course-filtered
+view of the Academic OS: importing it looks like success and behaves like data
+loss. `--allow-unmatched-courses` overrides, and the exit code is `3` so a
+scheduled run is visibly amber.
+
+**Due dates are converted from UTC to campus time.** Canvas stores 11:59pm
+Central as `04:59:59Z` the *next day*. Unconverted, every deadline moves a day
+later in the Notion calendar.
+
+**Adoption uses `adoption_key()`, never `matching.normalize()`.** The
+filename normaliser drops "notes", "copy" and "for", maps `hw`->`homework` and
+roman numerals to digits. Under it a page called "CS 411 Notes for Homework 3"
+is indistinguishable from the assignment "CS 411 | Homework 3", so the import
+would stamp the Canvas id onto the notes page and never create the row.
+`adoption_key` flattens case, accents and punctuation and drops nothing.
+
+**An adopted row is claimed inside the run, not just in Notion.** `existing` is
+a snapshot read once. Without `adoptee.canvas_id = ...` plus the `by_title`
+eviction, two Canvas assignments with the same name both adopt the same page:
+two writes, an arbitrary winner, no row at all for the loser, and a duplicate
+for it next run.
+
+**One unreadable Canvas course does not abort the import.** Rows for earlier
+courses are already written by then; letting `CanvasError` escape throws away
+the report that says what those writes were. Failures are collected per course
+and printed.
+
+**Every property name is overridable, and "" means don't write it.** Notion's
+own default title property is "Name". Hardcoding "Title", "Type" and "Status"
+made the first `create_page` 400 on any database shaped even slightly
+differently.
+
+**403 from Canvas can mean rate limit.** Canvas throttles with
+`403 Forbidden (Rate Limit Exceeded)`, not 429. Treated as permanent it aborts
+a large run mid-write, with the wrong explanation.
+
+**`points_possible` is not imported.** It is a point total, not a share of the
+final mark. Writing it into `Weight` would corrupt the grade rollups that the
+Courses database computes from it.
+
+**Tokens are compared as bytes.** `hmac.compare_digest` raises `TypeError`
+on a non-ASCII `str`, and `authorised()` runs *outside* the handler's try
+block -- so one curl with an accent in the token crashed the function instead
+of getting a 401.
+
+**`CANVAS_TOKEN` is not in `api/_shared.REQUIRED`.** Canvas is the optional
+half; adding it there would 500 every deployment that only wants the GoodNotes
+sync. `/api/canvas` answers `200 {"configured": false}` instead.
 
 **Loopback OAuth, not the device flow** (`oauth.py`). Google restricts the
 device flow to `drive.appdata` and `drive.file` for Drive; `drive.file` only
@@ -105,13 +175,23 @@ Two deployment settings that are easy to get wrong:
 - Drive backup folder: `1Y0qfNKgm0xHfMm8LegQ0sjTDL4RO-p56` — flat, currently
   `AI Rule Builder` and `LC`, each present as both `.pdf` and `.goodnotes`
 - Notion assignments database: `2e621472-ffe4-81e1-93ad-d47837eb7491`
-- Property written: `Notes PDF` (URL). A `Notes` formula renders it as a
-  compact marker in table views.
-- The assignments database is currently **empty**, so a live run links nothing
-  until rows exist. Use the stub-client tests to exercise the loop meanwhile.
+  (data source `collection://2e621472-ffe4-8107-8fca-000b9ecaf21e`)
+- Notion courses database: `2e621472ffe481978e95ec76dd6f2879`
+  (data source `collection://2e621472-ffe4-8111-b7a2-000badfeeb44`)
+- Properties written: `Notes PDF` (URL) by the sync; `Canvas ID` (text),
+  `Canvas URL` (url), `Due Date`, `Course`, `Type`, `Status` by the import.
+  A `Notes` formula renders the PDF link as a compact marker in table views.
+- Canvas: `https://canvas.uic.edu`. UIC is mid-migration from Blackboard --
+  Fall 2026 is each instructor's choice, Canvas is mandatory from Spring 2027 --
+  so some of the six courses will have no Canvas presence at all. The report
+  distinguishes "no Notion match" from "no assignments found".
+- The assignments database is currently **empty**, so a live sync links nothing
+  until the Canvas import (or a person) creates rows.
 
 ## Ideas not yet built
 
+- Import Canvas announcements or files (deliberately out of scope for now)
+- Mark a row `Submitted` from the Canvas submission state
 - Reverse direction: create a Notion row from an orphaned PDF
 - Second property linking the `.goodnotes` archive (the editable copy)
 - Match against a Lectures database as well as Assignments

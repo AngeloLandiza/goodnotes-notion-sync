@@ -1,5 +1,18 @@
 # goodnotes-notion-sync
 
+Keep a Notion assignments database in step with the two places coursework
+actually lives: **Canvas** (what is due, and when) and **GoodNotes** (what you
+wrote about it).
+
+- `canvas-import` creates a Notion row for every Canvas assignment and keeps
+  due dates current.
+- `sync` links each of those rows to the GoodNotes PDF of the same name in your
+  Google Drive backup folder.
+
+Both are optional halves. Run either on its own.
+
+## GoodNotes → Notion
+
 Link every assignment in a Notion database to the GoodNotes PDF of the same
 name in your Google Drive backup folder.
 
@@ -138,22 +151,132 @@ python -m goodnotes_notion_sync             # write the links
 Raise `--threshold` if you get wrong matches; lower it if good ones are being
 missed. `--dry-run` first, always.
 
+## Canvas → Notion
+
+```bash
+python -m goodnotes_notion_sync canvas-import --dry-run
+python -m goodnotes_notion_sync canvas-import
+```
+
+```
+6 Canvas course(s), 4 matched to Notion, 37 assignment(s) seen
+
+Created (12):
+  CS 411 | Homework 3
+         2026-09-13 23:59
+  STAT 382 | Quiz 2
+         2026-09-16 13:00
+
+Updated (1):
+  CS 412 | Project Milestone 1
+         2026-10-09 23:59  [was 2026-10-02 23:59]
+
+Already up to date (24)
+
+Canvas courses with no Notion match (2) - set the Code property on the Notion
+course row to fix:
+  Advanced Business Data Mining
+         no Notion course has Code 'IDS 435'
+  Notion knows: CS 342, CS 411, CS 412, STAT 382
+```
+
+### The join is the course code
+
+Canvas calls a course `2026_Fall_CS_411_39421`. Notion calls it a row whose
+**Code** property reads `CS 411`. Lining those up is the whole integration, and
+it is also the only thing you have to set up by hand: fill in `Code` on each
+row of your Courses database.
+
+A Canvas course with no Notion match is **reported and skipped**, not imported.
+An assignment with no Course relation is invisible in every course-filtered
+view in a Notion academic template, so importing it would look like success and
+behave like data loss. Pass `--allow-unmatched-courses` if you want them anyway.
+
+### What it writes, and what it refuses to touch
+
+| Property | On create | On later runs |
+|---|---|---|
+| `Title` | `CS 411 \| Homework 3` | **never rewritten** |
+| `Due Date` | from Canvas, in campus time | updated when Canvas moves it |
+| `Canvas URL` | link to the assignment | refreshed |
+| `Canvas ID` | Canvas' numeric id | the dedupe key |
+| `Course` | relation, matched by code | left alone |
+| `Type` | inferred from the name | left alone |
+| `Status` | `Not started` | **left alone** |
+
+Titles are written exactly once. Renaming a row to match a GoodNotes notebook
+is a deliberate act — it is how the PDF gets linked — and an import that
+restored Canvas' wording every six hours would quietly undo it, then blame the
+notebook in the sync report.
+
+Grades and weights are not imported at all. Canvas' `points_possible` is a
+point total, not a share of your final mark, and writing it into a `Weight`
+column would silently corrupt the grade formulas in an academic template.
+
+Due dates are converted from Canvas' UTC into campus time. An 11:59pm Central
+deadline is stored by Canvas as `04:59:59Z` **the next day**; copied across
+unconverted, every deadline lands a day late in Notion's calendar.
+
+### Setup
+
+1. In Canvas: **Account → Settings → New Access Token**. Copy it — it is shown
+   once. Treat it as a password; it can read everything your account can. This
+   tool never writes to Canvas.
+2. Add `CANVAS_TOKEN`, `CANVAS_BASE_URL` and `NOTION_COURSES_DB` to `.env`.
+3. Add a **Canvas ID** (text) and **Canvas URL** (url) property to your Notion
+   assignments database. `Type` (select) and `Status` (status) are written too
+   if you have them — pass `--type-property ""` / `--status-property ""` if you
+   do not.
+4. Fill in the **Code** property on each row of your Courses database.
+
+```
+--database ID              Notion assignments database
+--courses-database ID      Notion courses database
+--canvas-url HOST          your school's Canvas (default: $CANVAS_BASE_URL)
+--timezone NAME            campus timezone (default: America/Chicago)
+--enrollment-state STATE   active | completed | invited_or_pending
+--skip-undated             ignore assignments with no due date
+--allow-unmatched-courses  import courses that have no Notion row
+--title-property NAME      title property (default "Title"; Notion's own
+                           default is "Name")
+--type-property NAME       select property for the inferred kind; "" to skip
+--status-property NAME     status set on new rows; "" to skip
+--new-status NAME          status given to new rows (default "Not started")
+-n, --dry-run
+```
+
+Exit code `3` means some Canvas course had no Notion match — the run still
+imported everything it could.
+
+> **Not every course is on Canvas.** UIC is mid-migration from Blackboard:
+> through Fall 2026 each instructor picks one, and Canvas only becomes
+> mandatory in Spring 2027. Expect the import to cover some of your courses and
+> report the rest as having nothing to read.
+
 ## Running it on a schedule
 
-`.github/workflows/sync.yml` runs the sync every 6 hours and on demand. Add
-these repository secrets (**Settings → Secrets and variables → Actions**):
+`.github/workflows/sync.yml` runs every 6 hours and on demand. Add these
+repository secrets (**Settings → Secrets and variables → Actions**):
 
 `NOTION_TOKEN`, `NOTION_ASSIGNMENTS_DB`, `GOOGLE_CLIENT_ID`,
 `GOOGLE_CLIENT_SECRET`, `GOOGLE_REFRESH_TOKEN`, `GDRIVE_FOLDER_ID`
 
-Each run writes its report to the job summary, so the unmatched list is one
+Add `CANVAS_TOKEN`, `CANVAS_BASE_URL` and `NOTION_COURSES_DB` as well to turn
+on the Canvas step. Without `CANVAS_TOKEN` that step is skipped and the
+GoodNotes sync runs alone, so an existing setup keeps working untouched.
+
+Canvas runs **first**. Rows it creates are then visible to the GoodNotes
+matcher in the same run, so a new assignment and its notebook link up without
+waiting for the next pass.
+
+Each run writes both reports to the job summary, so the unmatched list is one
 click from the Actions tab.
 
 ## Optional: Vercel dashboard
 
-`vercel.json`, `api/` and `public/` add a small web UI — a report of what is
-linked, what is not, and which PDFs have no assignment, plus a **Sync now**
-button. GitHub Actions still does the scheduling; Vercel Hobby caps cron at
+`vercel.json`, `api/` and `public/` add a small web UI with a tab for each
+half: a report of what is linked, what is not, and which PDFs have no
+assignment, plus **Link PDFs now** and **Import now** buttons. GitHub Actions still does the scheduling; Vercel Hobby caps cron at
 **once per day** (a more frequent expression fails at deploy time), so it is a
 poor replacement for the 6-hourly Action but a good companion to it.
 
@@ -178,6 +301,12 @@ Set **eight** environment variables in the project settings: the six the CLI
 uses, plus `APP_TOKEN` (the dashboard login) and `CRON_SECRET` (what Vercel
 sends on scheduled runs). Generate the last two with `openssl rand -base64 32`.
 
+Add `CANVAS_TOKEN` and `NOTION_COURSES_DB` (and optionally `CANVAS_BASE_URL`,
+`CAMPUS_TIMEZONE`) to light up the dashboard's **Canvas → Notion** tab.
+Without them `/api/canvas` answers `200` with `configured: false` and the tab
+says so — deliberately not an error, so a deployment that only wants the
+GoodNotes half is never made to look broken.
+
 Vercel does **not** create `CRON_SECRET` for you — you add the variable, and
 Vercel then sends its value as the `Authorization` header when it invokes the
 cron. Without it, scheduled runs are rejected by the same check that protects
@@ -198,10 +327,10 @@ before deploying; `GDRIVE_FOLDER_ID` is the only real value in that file.
 ```bash
 source .venv/bin/activate     # created during setup, above
 pip install -r requirements-dev.txt
-pytest                        # 61 tests, offline, well under a second
+pytest                        # 152 tests, offline, a few seconds
 ```
 
-Three suites, and the split is deliberate:
+The split between suites is deliberate:
 
 - `tests/test_matching.py` — normalisation, the course veto, number conflicts,
   ambiguity refusal. The rules that decide whether a link is right.
@@ -211,6 +340,12 @@ Three suites, and the split is deliberate:
   it **fails closed** when no token is configured.
 - `tests/test_oauth.py` — PKCE derivation, the consent-URL parameters that
   decide whether a refresh token comes back, and code exchange against a stub.
+- `tests/test_canvas.py` — Link-header pagination, UIC's underscored course
+  codes, the UTC→campus-time conversion, and the import loop's four outcomes
+  (create, update, adopt, refuse) against recorders.
+- `tests/test_notion.py` — the property extraction the whole idempotency story
+  rests on. Without it, reading `Canvas ID` back wrongly would duplicate every
+  row on every run with a green suite.
 
 Nothing here touches the network, which is why it runs instantly and why it is
 worth running on every change.
@@ -223,6 +358,10 @@ worth running on every change.
   notebook may take a few minutes to appear in Drive.
 - Renaming a notebook creates a *new* PDF in Drive; the old one stays and shows
   up as an orphan until you delete it.
+- An assignment deleted in Canvas is **not** deleted in Notion. Nothing here
+  removes a row you might have written notes on.
+- Only assignments are read from Canvas. Announcements, files, grades and
+  submissions are not.
 
 ## Licence
 
