@@ -8,14 +8,11 @@ import os
 import pathlib
 import sys
 
-import requests
 
 from .drive import SCOPES, DriveClient, DriveError
 from .notion import NotionClient, NotionError
+from .oauth import OAuthError, run_local_flow
 from .sync import run_sync
-
-DEVICE_CODE_URL = "https://oauth2.googleapis.com/device/code"
-TOKEN_URL = "https://oauth2.googleapis.com/token"
 
 
 def _load_dotenv(path: pathlib.Path) -> None:
@@ -39,61 +36,21 @@ def _require(name: str) -> str:
 
 
 def cmd_auth(args: argparse.Namespace) -> int:
-    """One-time device-code flow to mint a Google refresh token."""
-    client_id = _require("GOOGLE_CLIENT_ID")
-    client_secret = _require("GOOGLE_CLIENT_SECRET")
-
-    start = requests.post(
-        DEVICE_CODE_URL,
-        data={"client_id": client_id, "scope": " ".join(SCOPES)},
-        timeout=30,
-    )
-    if start.status_code != 200:
-        print(f"Could not start device flow: {start.text[:300]}", file=sys.stderr)
-        return 1
-    payload = start.json()
-
-    print()
-    print("  1. Open:", payload["verification_url"])
-    print("  2. Enter code:", payload["user_code"])
-    print()
-    print("Waiting for you to finish in the browser...")
-
-    import time
-
-    interval = int(payload.get("interval", 5))
-    deadline = time.time() + int(payload.get("expires_in", 600))
-    while time.time() < deadline:
-        time.sleep(interval)
-        poll = requests.post(
-            TOKEN_URL,
-            data={
-                "client_id": client_id,
-                "client_secret": client_secret,
-                "device_code": payload["device_code"],
-                "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
-            },
-            timeout=30,
+    """One-time browser authorisation that prints a refresh token."""
+    try:
+        token = run_local_flow(
+            client_id=_require("GOOGLE_CLIENT_ID"),
+            client_secret=_require("GOOGLE_CLIENT_SECRET"),
+            scopes=SCOPES,
+            open_browser=not args.no_browser,
         )
-        data = poll.json()
-        if poll.status_code == 200:
-            print()
-            print("Success. Save this as GOOGLE_REFRESH_TOKEN:")
-            print()
-            print("   ", data["refresh_token"])
-            print()
-            return 0
-        error = data.get("error")
-        if error == "authorization_pending":
-            continue
-        if error == "slow_down":
-            interval += 5
-            continue
-        print(f"Auth failed: {data}", file=sys.stderr)
+    except OAuthError as exc:
+        print(f"error: {exc}", file=sys.stderr)
         return 1
 
-    print("Timed out waiting for authorisation.", file=sys.stderr)
-    return 1
+    print("Success. Save this as GOOGLE_REFRESH_TOKEN:\n")
+    print(f"    {token}\n")
+    return 0
 
 
 def cmd_sync(args: argparse.Namespace) -> int:
@@ -159,6 +116,11 @@ def build_parser() -> argparse.ArgumentParser:
         parents=[common],
         help="mint a Google refresh token (run once)",
     )
+    auth.add_argument(
+        "--no-browser",
+        action="store_true",
+        help="print the URL instead of opening a browser",
+    )
     auth.set_defaults(func=cmd_auth)
 
     sync = sub.add_parser(
@@ -220,7 +182,7 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         return args.func(args)
-    except (DriveError, NotionError) as exc:
+    except (DriveError, NotionError, OAuthError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
 

@@ -9,7 +9,7 @@ property. GoodNotes has no API; the hook is its Auto-Backup to Drive.
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements-dev.txt
-pytest                                     # 47 tests, offline, ~0.2s
+pytest                                     # 61 tests, offline, ~0.2s
 python -m goodnotes_notion_sync --dry-run  # report without writing
 python -m goodnotes_notion_sync            # write links
 python -m goodnotes_notion_sync auth       # mint a Google refresh token
@@ -31,7 +31,8 @@ matching logic is the part that actually gets tested.
 | `drive.py` | read-only recursive Drive walk, returns `Candidate`s |
 | `notion.py` | two REST calls: query a database, PATCH a URL property |
 | `sync.py` | pairs them up, produces a `Report` |
-| `cli.py` | argparse, dotenv, device-code OAuth |
+| `cli.py` | argparse, dotenv, subcommands |
+| `oauth.py` | one-time loopback OAuth to mint a refresh token |
 | `api/`, `public/`, `vercel.json` | optional Vercel dashboard over the same `run_sync()` |
 
 ## Decisions that look arbitrary but are not
@@ -62,6 +63,15 @@ assignment order in Notion never decides who wins a contested PDF.
 
 **No rapidfuzz.** stdlib `difflib` keeps the runtime dependency list at
 `requests` alone.
+
+**Loopback OAuth, not the device flow** (`oauth.py`). Google restricts the
+device flow to `drive.appdata` and `drive.file` for Drive; `drive.file` only
+sees files the app created, so it cannot read a backup folder, and
+`drive.readonly` is not offered there at all. The client must be a **Desktop
+app**; a `TVs and Limited Input devices` client fails with `invalid_client`.
+PKCE S256 is included because installed apps cannot keep a secret.
+`access_type=offline` **and** `prompt=consent` are both required or Google
+returns no refresh token on re-authorisation.
 
 ## Vercel dashboard (optional surface)
 

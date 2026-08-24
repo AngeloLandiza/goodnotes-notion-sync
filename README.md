@@ -79,10 +79,20 @@ Without that last step the API cannot see the database.
 
 In [Google Cloud Console](https://console.cloud.google.com/): create a project,
 enable the **Google Drive API**, then **Credentials → Create credentials →
-OAuth client ID → TVs and Limited Input devices**. Copy the client ID and
-secret.
+OAuth client ID → Desktop app**. Copy the client ID and secret.
 
-Read-only Drive scope is all this asks for.
+> **It must be `Desktop app`.** Google's device flow — the one that shows a
+> code to type into another screen — is restricted to a short scope list, and
+> for Drive that is only `drive.appdata` and `drive.file`. `drive.file` sees
+> only files the app itself created, so it can never read your GoodNotes
+> folder. `auth` therefore uses the installed-app loopback flow, which supports
+> `drive.readonly`; a `TVs and Limited Input devices` client fails it with
+> `invalid_client: Invalid client type`.
+
+Read-only Drive scope is all this asks for. `auth` opens your browser, listens
+on a throwaway `127.0.0.1` port for the redirect, and exchanges the code with
+PKCE. Nothing needs registering as a redirect URI — Desktop app clients accept
+any loopback port.
 
 ### 4. Configure and authorise
 
@@ -188,7 +198,7 @@ before deploying; `GDRIVE_FOLDER_ID` is the only real value in that file.
 ```bash
 source .venv/bin/activate     # created during setup, above
 pip install -r requirements-dev.txt
-pytest                        # 47 tests, offline, well under a second
+pytest                        # 61 tests, offline, well under a second
 ```
 
 Three suites, and the split is deliberate:
@@ -199,6 +209,8 @@ Three suites, and the split is deliberate:
   claim-ordering and dry-run behaviour are covered without a network.
 - `tests/test_api_auth.py` — the Vercel endpoint's bearer check, including that
   it **fails closed** when no token is configured.
+- `tests/test_oauth.py` — PKCE derivation, the consent-URL parameters that
+  decide whether a refresh token comes back, and code exchange against a stub.
 
 Nothing here touches the network, which is why it runs instantly and why it is
 worth running on every change.
