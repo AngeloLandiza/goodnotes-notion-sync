@@ -2,9 +2,7 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "functions": {
     "api/*.py": {
-      "memory": 1024,
-      "maxDuration": 60,
-      "includeFiles": "goodnotes_notion_sync/**"
+      "maxDuration": 60
     }
   },
   "crons": [

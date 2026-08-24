@@ -151,9 +151,31 @@ poor replacement for the 6-hourly Action but a good companion to it.
 vercel                    # deploy
 ```
 
-Set `APP_TOKEN` to a long random string in the project's environment
-variables, alongside the same six the CLI uses. Vercel injects `CRON_SECRET`
-itself.
+**Set Application Preset to `Other`, not `Python`.** A Python *framework*
+preset takes precedence over file-based functions: when one is detected, the
+framework app handles every request and files under `/api` never become
+functions at all. The Python preset also wants an ASGI/WSGI entrypoint
+(`app.py` exporting `app`), which this project does not have — it is a CLI with
+two thin handlers bolted on. `Other` gives the zero-config behaviour this
+layout needs: each `api/*.py` becomes a function, and `public/` is served
+statically at `/`.
+
+`api/_shared.py` is deliberately underscore-prefixed. Vercel skips files in
+`/api` starting with `_`, so the helper module is importable without also
+being published as its own endpoint.
+
+Set **eight** environment variables in the project settings: the six the CLI
+uses, plus `APP_TOKEN` (the dashboard login) and `CRON_SECRET` (what Vercel
+sends on scheduled runs). Generate the last two with `openssl rand -base64 32`.
+
+Vercel does **not** create `CRON_SECRET` for you — you add the variable, and
+Vercel then sends its value as the `Authorization` header when it invokes the
+cron. Without it, scheduled runs are rejected by the same check that protects
+the dashboard.
+
+If you import the repo from GitHub, Vercel pre-detects six names from
+`.env.example` **with the placeholder values still in them**. Replace every one
+before deploying; `GDRIVE_FOLDER_ID` is the only real value in that file.
 
 > **That endpoint is public.** Anyone who guesses the deployment name can reach
 > it, so every request must carry `Authorization: Bearer <APP_TOKEN>` (the
